@@ -1,0 +1,69 @@
+[
+  {
+    "id": "floral-motif",
+    "name": "Floral Motif",
+    "name_tamil": "பூ மோட்டிஃப்",
+    "description": "Elegant floral patterns with intricate petal work. Suitable for sarees, blouses, and kurtas.",
+    "description_tamil": "நேர்த்தியான பூ வடிவங்கள். சேலை, ரவிக்கை, குர்தா ஆகியவற்றிற்கு ஏற்றது.",
+    "price": 1500,
+    "turnaround_days": 7,
+    "suitable_for": ["saree", "blouse", "kurta", "dupatta"],
+    "available": true
+  },
+  {
+    "id": "peacock-design",
+    "name": "Peacock Design",
+    "name_tamil": "மயில் டிசைன்",
+    "description": "Traditional peacock motif with detailed feather work. A classic South Indian design. Popular for wedding sarees.",
+    "description_tamil": "பாரம்பரிய மயில் வடிவம். திருமண சேலைகளுக்கு மிகவும் பிரபலம்.",
+    "price": 2500,
+    "turnaround_days": 10,
+    "suitable_for": ["saree", "blouse", "lehenga"],
+    "available": true
+  },
+  {
+    "id": "temple-border",
+    "name": "Temple Border",
+    "name_tamil": "கோவில் பார்டர்",
+    "description": "Traditional temple-inspired border design. Perfect for silk sarees and pattu pavadai.",
+    "description_tamil": "பாரம்பரிய கோவில் பார்டர் டிசைன். பட்டு சேலை, பட்டு பாவாடைக்கு ஏற்றது.",
+    "price": 2000,
+    "turnaround_days": 8,
+    "suitable_for": ["saree", "pavadai"],
+    "available": true
+  },
+  {
+    "id": "mughal-pattern",
+    "name": "Mughal Pattern",
+    "name_tamil": "முகலாய வடிவம்",
+    "description": "Mughal-inspired intricate patterns with fine thread work. Rich and royal look.",
+    "description_tamil": "முகலாய பாணியிலான நுணுக்கமான வடிவம். செழிப்பான தோற்றம்.",
+    "price": 3000,
+    "turnaround_days": 12,
+    "suitable_for": ["saree", "lehenga", "sherwani", "kurta"],
+    "available": true
+  },
+  {
+    "id": "mango-paisley",
+    "name": "Mango Paisley (Maavilai)",
+    "name_tamil": "மாவிலை டிசைன்",
+    "description": "Traditional mango/paisley motif. Timeless design suitable for all occasions.",
+    "description_tamil": "பாரம்பரிய மாவிலை வடிவம். அனைத்து நிகழ்வுகளுக்கும் ஏற்றது.",
+    "price": 1800,
+    "turnaround_days": 7,
+    "suitable_for": ["saree", "blouse", "dupatta", "kurta"],
+    "available": true
+  },
+  {
+    "id": "custom-design",
+    "name": "Custom Design",
+    "name_tamil": "கஸ்டம் டிசைன்",
+    "description": "Send us a reference image and we will replicate or create a custom embroidery design for you.",
+    "description_tamil": "நீங்கள் விரும்பும் படத்தை அனுப்புங்கள், அதை எம்பிராய்டரி செய்து தருவோம்.",
+    "price": 0,
+    "turnaround_days": 14,
+    "suitable_for": ["saree", "blouse", "kurta", "lehenga", "dupatta", "sherwani", "any"],
+    "available": true,
+    "note": "Price varies based on complexity. Minimum ₹2,000."
+  }
+]
