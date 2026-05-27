@@ -1,0 +1,35 @@
+{
+  "business": {
+    "name": "Amma's Kitchen",
+    "location": "Adyar, Chennai",
+    "working_hours": "Breakfast: 7-10 AM, Lunch: 11:30 AM - 2 PM, Dinner: 7-9:30 PM",
+    "delivery_areas": ["Adyar", "Besant Nagar", "Thiruvanmiyur", "Kotturpuram", "Raja Annamalai Puram", "Mylapore", "Mandaveli"],
+    "minimum_order": 100,
+    "delivery_charge": 0,
+    "delivery_note": "Free delivery for orders above ₹100 within 5km. No delivery charge.",
+    "payment_methods": ["Cash on delivery", "Google Pay", "PhonePe"]
+  },
+  "today": {
+    "day": "Wednesday",
+    "breakfast": [
+      { "id": "idli-set", "name": "Idli Set (4 pcs)", "description": "Soft idlis with sambar and coconut chutney", "price": 40 },
+      { "id": "dosa-set", "name": "Dosa Set (2 pcs)", "description": "Crispy dosa with sambar and chutney", "price": 50 },
+      { "id": "pongal-vada", "name": "Pongal + Vada", "description": "Hot pongal with crispy vada and chutney", "price": 60 },
+      { "id": "upma-kesari", "name": "Upma + Kesari", "description": "Rava upma with sweet kesari", "price": 45 }
+    ],
+    "lunch": [
+      { "id": "sambar-rice", "name": "Sambar Rice", "description": "Homemade sambar rice with appalam", "price": 60 },
+      { "id": "lemon-rice", "name": "Lemon Rice", "description": "Tangy lemon rice with peanuts", "price": 50 },
+      { "id": "curd-rice", "name": "Curd Rice", "description": "Cool curd rice with pickle", "price": 40 },
+      { "id": "chicken-biryani", "name": "Chicken Biryani", "description": "Chennai-style chicken biryani with raita", "price": 120 },
+      { "id": "veg-meals", "name": "Veg Meals (Full)", "description": "Rice + sambar + rasam + poriyal + curd + appalam + pickle", "price": 80 },
+      { "id": "chapati-kurma", "name": "Chapati + Kurma (3 pcs)", "description": "Soft chapati with veg kurma", "price": 70 }
+    ],
+    "dinner": [
+      { "id": "parotta-salna", "name": "Parotta + Salna (2 pcs)", "description": "Flaky parotta with spicy salna", "price": 70 },
+      { "id": "idiyappam-kurma", "name": "Idiyappam + Kurma (4 pcs)", "description": "Soft idiyappam with veg kurma", "price": 60 },
+      { "id": "chapati-kurma-dinner", "name": "Chapati + Kurma (3 pcs)", "description": "Soft chapati with veg kurma", "price": 70 },
+      { "id": "chicken-biryani-dinner", "name": "Chicken Biryani", "description": "Chennai-style chicken biryani with raita", "price": 120 }
+    ]
+  }
+}
