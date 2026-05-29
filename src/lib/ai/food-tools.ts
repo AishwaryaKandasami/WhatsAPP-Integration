@@ -1,6 +1,12 @@
 import { Type, type FunctionDeclaration } from "@google/genai";
 import { getAllMenuItems, findMenuItem } from "./food-prompts";
-import menuData from "../../../data/food-menu.json";
+import { saveFoodOrder } from "@/lib/db/food-queries";
+
+export interface FoodToolContext {
+  conversationId?: string;
+  customerPhone?: string;
+  customerName?: string;
+}
 
 /**
  * Tool/function declarations for the food bot
@@ -83,35 +89,42 @@ export const foodFunctionDeclarations: FunctionDeclaration[] = [
 ];
 
 /**
- * Execute a food tool call and return the result
+ * Execute a food tool call and return the result.
+ * Now async — reads menu from Supabase, writes orders to Supabase.
  */
-export function executeFoodTool(
+export async function executeFoodTool(
   name: string,
-  input: Record<string, unknown>
-): Record<string, unknown> {
+  input: Record<string, unknown>,
+  context: FoodToolContext = {}
+): Promise<Record<string, unknown>> {
   switch (name) {
     case "get_todays_menu": {
       const mealType = (input.meal_type as string) || "all";
-      const { today } = menuData;
+      const items = await getAllMenuItems();
 
-      const result: Record<string, unknown> = { day: today.day };
+      const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const result: Record<string, unknown> = { day: days[new Date().getDay()] };
+
+      const breakfast = items.filter((i) => i.meal_type === "breakfast");
+      const lunch = items.filter((i) => i.meal_type === "lunch");
+      const dinner = items.filter((i) => i.meal_type === "dinner");
 
       if (mealType === "all" || mealType === "breakfast") {
-        result.breakfast = today.breakfast.map((i) => ({
+        result.breakfast = breakfast.map((i) => ({
           name: i.name,
           price: `Rs.${i.price}`,
           description: i.description,
         }));
       }
       if (mealType === "all" || mealType === "lunch") {
-        result.lunch = today.lunch.map((i) => ({
+        result.lunch = lunch.map((i) => ({
           name: i.name,
           price: `Rs.${i.price}`,
           description: i.description,
         }));
       }
       if (mealType === "all" || mealType === "dinner") {
-        result.dinner = today.dinner.map((i) => ({
+        result.dinner = dinner.map((i) => ({
           name: i.name,
           price: `Rs.${i.price}`,
           description: i.description,
@@ -122,7 +135,7 @@ export function executeFoodTool(
     }
 
     case "search_menu": {
-      const results = findMenuItem(input.query as string);
+      const results = await findMenuItem(input.query as string);
       if (results.length === 0) {
         return {
           found: false,
@@ -143,6 +156,25 @@ export function executeFoodTool(
     case "confirm_order": {
       const orderId = `FOOD-${Date.now().toString(36).toUpperCase()}`;
 
+      // Save order to Supabase
+      try {
+        await saveFoodOrder({
+          conversation_id: context.conversationId,
+          customer_phone: context.customerPhone ?? "unknown",
+          customer_name: (input.customer_name as string) ?? context.customerName ?? "Customer",
+          items_text: input.items as string,
+          total: input.total as number,
+          delivery_type: (input.delivery_type as string) === "pickup" ? "pickup" : "delivery",
+          delivery_address: input.delivery_address as string | undefined,
+          meal_type: input.meal_type as string,
+          notes: input.notes as string | undefined,
+        });
+        console.log(`[Food] Order saved to DB: ${orderId}`);
+      } catch (err) {
+        console.error(`[Food] Failed to save order to DB:`, err);
+        // Continue even if DB save fails — the order confirmation still works
+      }
+
       return {
         success: true,
         order_id: orderId,
@@ -151,7 +183,7 @@ export function executeFoodTool(
           total: `Rs.${input.total}`,
           delivery_type: input.delivery_type,
           delivery_address: input.delivery_address ?? "Pickup",
-          customer_name: input.customer_name ?? "Customer",
+          customer_name: (input.customer_name as string) ?? context.customerName ?? "Customer",
           meal_type: input.meal_type,
           notes: input.notes ?? null,
         },

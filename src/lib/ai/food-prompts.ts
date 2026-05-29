@@ -1,32 +1,51 @@
-import menuData from "../../../data/food-menu.json";
+import {
+  getTodaysMenu,
+  getFoodBusinessConfig,
+  searchMenuItem,
+  type DailyMenuItemRow,
+} from "@/lib/db/food-queries";
 
-function formatMenuForPrompt(): string {
-  const { today } = menuData;
+async function formatMenuForPrompt(): Promise<string> {
+  const items = await getTodaysMenu();
 
-  let menu = `Today is ${today.day}.\n\n`;
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const today = days[new Date().getDay()];
 
-  menu += "BREAKFAST (7-10 AM):\n";
-  for (const item of today.breakfast) {
-    menu += `- ${item.name}: ${item.description}. Price: Rs.${item.price}\n`;
+  let menu = `Today is ${today}.\n\n`;
+
+  const breakfast = items.filter((i) => i.meal_type === "breakfast");
+  const lunch = items.filter((i) => i.meal_type === "lunch");
+  const dinner = items.filter((i) => i.meal_type === "dinner");
+
+  if (breakfast.length > 0) {
+    menu += "BREAKFAST (7-10 AM):\n";
+    for (const item of breakfast) {
+      menu += `- ${item.name}: ${item.description}. Price: Rs.${item.price}\n`;
+    }
   }
 
-  menu += "\nLUNCH (11:30 AM - 2 PM):\n";
-  for (const item of today.lunch) {
-    menu += `- ${item.name}: ${item.description}. Price: Rs.${item.price}\n`;
+  if (lunch.length > 0) {
+    menu += "\nLUNCH (11:30 AM - 2 PM):\n";
+    for (const item of lunch) {
+      menu += `- ${item.name}: ${item.description}. Price: Rs.${item.price}\n`;
+    }
   }
 
-  menu += "\nDINNER (7-9:30 PM):\n";
-  for (const item of today.dinner) {
-    menu += `- ${item.name}: ${item.description}. Price: Rs.${item.price}\n`;
+  if (dinner.length > 0) {
+    menu += "\nDINNER (7-9:30 PM):\n";
+    for (const item of dinner) {
+      menu += `- ${item.name}: ${item.description}. Price: Rs.${item.price}\n`;
+    }
   }
 
   return menu;
 }
 
-export function buildFoodSystemPrompt(): string {
-  const { business } = menuData;
+export async function buildFoodSystemPrompt(): Promise<string> {
+  const config = await getFoodBusinessConfig();
+  const menuText = await formatMenuForPrompt();
 
-  return `You are the friendly AI order assistant for "${business.name}", a home kitchen located in ${business.location}.
+  return `You are the friendly AI order assistant for "${config.business_name}", a home kitchen located in ${config.location}.
 
 ## Your role
 You take food orders from customers on WhatsApp. You show today's menu, take orders, CONFIRM orders directly, and notify the kitchen. You are warm, friendly, and quick — like a helpful neighbor.
@@ -40,16 +59,16 @@ You take food orders from customers on WhatsApp. You show today's menu, take ord
 - This is a strict rule with zero exceptions.
 
 ## Business details
-- Business: ${business.name}
-- Location: ${business.location}
-- Working hours: ${business.working_hours}
-- Delivery areas: ${business.delivery_areas.join(", ")}
-- Minimum order: Rs.${business.minimum_order}
-- Delivery: ${business.delivery_note}
-- Payment: ${business.payment_methods.join(", ")}
+- Business: ${config.business_name}
+- Location: ${config.location}
+- Working hours: ${config.working_hours}
+- Delivery areas: ${(config.delivery_areas as string[]).join(", ")}
+- Minimum order: Rs.${config.minimum_order}
+- Delivery: ${config.delivery_note ?? "Free delivery within 5km"}
+- Payment: ${(config.payment_methods as string[]).join(", ")}
 
 ## Today's Menu
-${formatMenuForPrompt()}
+${menuText}
 
 ## How to take orders
 1. Greet the customer and show today's menu (based on time — breakfast/lunch/dinner)
@@ -74,8 +93,8 @@ After using confirm_order tool, tell the customer:
 ## What you MUST NOT do
 - Do NOT offer items that are not on today's menu
 - Do NOT change prices
-- Do NOT accept orders below minimum order (Rs.${business.minimum_order})
-- Do NOT accept delivery outside these areas: ${business.delivery_areas.join(", ")}
+- Do NOT accept orders below minimum order (Rs.${config.minimum_order})
+- Do NOT accept delivery outside these areas: ${(config.delivery_areas as string[]).join(", ")}
   (If outside, suggest pickup instead)
 - Do NOT handle complaints — say "Sorry about that, let me connect you with the kitchen" and stop
 
@@ -87,23 +106,15 @@ After using confirm_order tool, tell the customer:
 }
 
 /**
- * Get all menu items as a flat list (for tool use)
+ * Get all menu items available today (for tool use)
  */
-export function getAllMenuItems() {
-  const { today } = menuData;
-  return [...today.breakfast, ...today.lunch, ...today.dinner];
+export async function getAllMenuItems(): Promise<DailyMenuItemRow[]> {
+  return getTodaysMenu();
 }
 
 /**
- * Find a menu item by ID or name (fuzzy)
+ * Find a menu item by name/description (fuzzy search)
  */
-export function findMenuItem(query: string) {
-  const items = getAllMenuItems();
-  const q = query.toLowerCase();
-  return items.filter(
-    (item) =>
-      item.id.includes(q) ||
-      item.name.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q)
-  );
+export async function findMenuItem(query: string): Promise<DailyMenuItemRow[]> {
+  return searchMenuItem(query);
 }

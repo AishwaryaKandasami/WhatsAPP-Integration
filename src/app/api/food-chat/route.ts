@@ -41,7 +41,8 @@ export async function POST(request: NextRequest) {
     const response = await processFoodMessage(
       message,
       history,
-      "Food Demo Customer"
+      "Food Demo Customer",
+      { conversationId: conversation.id, customerPhone: FOOD_TEST_PHONE }
     );
 
     // Store the bot reply

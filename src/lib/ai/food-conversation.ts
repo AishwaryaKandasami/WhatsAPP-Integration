@@ -1,6 +1,6 @@
 import { GoogleGenAI, type Content, type Part } from "@google/genai";
 import { buildFoodSystemPrompt } from "./food-prompts";
-import { foodFunctionDeclarations, executeFoodTool } from "./food-tools";
+import { foodFunctionDeclarations, executeFoodTool, type FoodToolContext } from "./food-tools";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -21,9 +21,10 @@ export interface FoodAIResponse {
 export async function processFoodMessage(
   customerMessage: string,
   conversationHistory: ConversationMessage[],
-  customerName: string
+  customerName: string,
+  context?: { conversationId?: string; customerPhone?: string }
 ): Promise<FoodAIResponse> {
-  const systemPrompt = buildFoodSystemPrompt();
+  const systemPrompt = await buildFoodSystemPrompt();
 
   const contents: Content[] = [];
 
@@ -43,6 +44,12 @@ export async function processFoodMessage(
 
   let orderConfirmed = false;
   let orderSummary: string | null = null;
+
+  const toolContext: FoodToolContext = {
+    conversationId: context?.conversationId,
+    customerPhone: context?.customerPhone,
+    customerName,
+  };
 
   const config = {
     tools: [{ functionDeclarations: foodFunctionDeclarations }],
@@ -81,9 +88,10 @@ export async function processFoodMessage(
       const functionCall = response.functionCalls[0];
       console.log(`[Food] Tool call: ${functionCall.name}`, JSON.stringify(functionCall.args));
 
-      const toolResult = executeFoodTool(
+      const toolResult = await executeFoodTool(
         functionCall.name!,
-        (functionCall.args ?? {}) as Record<string, unknown>
+        (functionCall.args ?? {}) as Record<string, unknown>,
+        toolContext
       );
 
       // Track order confirmation

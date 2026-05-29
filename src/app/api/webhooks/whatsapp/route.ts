@@ -9,6 +9,7 @@ import {
 } from "@/lib/whatsapp/client";
 import type { WebhookBody } from "@/lib/whatsapp/types";
 import { processMessage } from "@/lib/ai/conversation";
+import { processFoodMessage } from "@/lib/ai/food-conversation";
 import {
   getOrCreateConversation,
   storeMessage,
@@ -107,35 +108,66 @@ export async function POST(request: NextRequest) {
         // 6. Get conversation history for context
         const history = await getConversationHistory(conversation.id);
 
-        // 7. Process through AI
-        const aiResponse = await processMessage(
-          messageText,
-          history,
-          customerName
-        );
+        // 7. Process through AI (branch based on BOT_MODE)
+        const botMode = process.env.BOT_MODE || "embroidery";
 
-        // 8. Send reply to customer
-        const { messageId: replyMessageId } = await sendTextReply(
-          customerPhone,
-          aiResponse.reply
-        );
-
-        // 9. Store outgoing message
-        await storeMessage(
-          conversation.id,
-          "outbound",
-          aiResponse.reply,
-          "text",
-          replyMessageId
-        );
-
-        // 10. If order was created, notify seller
-        if (aiResponse.orderCreated && aiResponse.orderSummary) {
-          console.log("Order created — notifying seller");
-          await notifySeller(
-            aiResponse.orderSummary +
-              `\nCustomer phone: ${customerPhone}`
+        if (botMode === "food") {
+          // ── Food bot flow ──
+          const aiResponse = await processFoodMessage(
+            messageText,
+            history,
+            customerName,
+            { conversationId: conversation.id, customerPhone }
           );
+
+          const { messageId: replyMessageId } = await sendTextReply(
+            customerPhone,
+            aiResponse.reply
+          );
+
+          await storeMessage(
+            conversation.id,
+            "outbound",
+            aiResponse.reply,
+            "text",
+            replyMessageId
+          );
+
+          if (aiResponse.orderConfirmed && aiResponse.orderSummary) {
+            console.log("Food order confirmed — notifying seller");
+            await notifySeller(
+              aiResponse.orderSummary +
+                `\nCustomer phone: ${customerPhone}`
+            );
+          }
+        } else {
+          // ── Embroidery bot flow (default) ──
+          const aiResponse = await processMessage(
+            messageText,
+            history,
+            customerName
+          );
+
+          const { messageId: replyMessageId } = await sendTextReply(
+            customerPhone,
+            aiResponse.reply
+          );
+
+          await storeMessage(
+            conversation.id,
+            "outbound",
+            aiResponse.reply,
+            "text",
+            replyMessageId
+          );
+
+          if (aiResponse.orderCreated && aiResponse.orderSummary) {
+            console.log("Order created — notifying seller");
+            await notifySeller(
+              aiResponse.orderSummary +
+                `\nCustomer phone: ${customerPhone}`
+            );
+          }
         }
 
         console.log(`Reply sent to ${customerPhone}`);
