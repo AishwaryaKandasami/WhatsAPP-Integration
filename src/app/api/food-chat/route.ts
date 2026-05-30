@@ -4,13 +4,16 @@ import {
   storeMessage,
   getFlowState,
   updateFlowState,
+  getConversationHistory,
 } from "@/lib/db/queries";
 import {
   handleFlowStep,
   emptyFlowData,
   type FlowData,
   type FlowState,
+  type FlowMessage,
 } from "@/lib/flow/food-flow";
+import { groqFallbackReply } from "@/lib/ai/groq-fallback";
 
 /**
  * POST /api/food-chat
@@ -56,6 +59,18 @@ export async function POST(request: NextRequest) {
       }
     );
 
+    // ── Layer 3: AI fallback ──
+    // Flow couldn't parse the message — get a menu-grounded Groq reply.
+    let messagesToSend: FlowMessage[] = flowResult.messages;
+    if (flowResult.needsAI) {
+      const history = await getConversationHistory(conversation.id);
+      const ai = await groqFallbackReply(message, {
+        mealType: (flow_data as unknown as FlowData)?.meal_type ?? null,
+        history: history.slice(0, -1),
+      });
+      messagesToSend = [{ type: "text", text: ai.reply }];
+    }
+
     // Save updated flow state
     await updateFlowState(
       conversation.id,
@@ -66,7 +81,7 @@ export async function POST(request: NextRequest) {
     // Combine all flow messages into a single text reply for the demo page
     // (Demo page doesn't support buttons/lists — render as text)
     const replyParts: string[] = [];
-    for (const msg of flowResult.messages) {
+    for (const msg of messagesToSend) {
       replyParts.push(msg.text);
 
       // Render buttons as text options for demo

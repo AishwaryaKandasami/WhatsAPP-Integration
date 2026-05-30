@@ -1,5 +1,6 @@
 import { getTodaysMenu, saveFoodOrder, getFoodBusinessConfig } from "@/lib/db/food-queries";
 import type { DailyMenuItemRow } from "@/lib/db/food-queries";
+import { checkFaq } from "./faq-router";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -137,6 +138,21 @@ export async function handleFlowStep(
   input: MessageInput,
   context: { customerPhone?: string; conversationId?: string; customerName?: string }
 ): Promise<FlowResult> {
+  // ── Layer 1: FAQ router ──────────────────────────────────────────
+  // Only intercept plain text (never button/list clicks — those are flow input).
+  // An FAQ answer does NOT change state/data, so the customer keeps their place
+  // in the order flow.
+  if (input.type === "text" && input.text) {
+    const faq = await checkFaq(input.text);
+    if (faq.matched && faq.answer) {
+      return {
+        newState: state,
+        newData: data,
+        messages: [{ type: "text", text: faq.answer }],
+      };
+    }
+  }
+
   switch (state) {
     case "start":
       return handleStart(data, input);

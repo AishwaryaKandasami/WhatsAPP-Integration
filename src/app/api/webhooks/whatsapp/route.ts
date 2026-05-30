@@ -12,6 +12,7 @@ import {
 } from "@/lib/whatsapp/client";
 import type { WebhookBody } from "@/lib/whatsapp/types";
 import { processMessage } from "@/lib/ai/conversation";
+import { groqFallbackReply } from "@/lib/ai/groq-fallback";
 import {
   getOrCreateConversation,
   storeMessage,
@@ -132,6 +133,20 @@ export async function POST(request: NextRequest) {
             }
           );
 
+          // ── Layer 3: AI fallback ──
+          // The flow couldn't parse this message (e.g. messy Tanglish item).
+          // Ask Groq for a menu-grounded reply instead of the canned message.
+          let messagesToSend = flowResult.messages;
+          if (flowResult.needsAI && parsed.text) {
+            const history = await getConversationHistory(conversation.id);
+            const ai = await groqFallbackReply(parsed.text, {
+              mealType:
+                (flow_data as unknown as FlowData)?.meal_type ?? null,
+              history: history.slice(0, -1),
+            });
+            messagesToSend = [{ type: "text", text: ai.reply }];
+          }
+
           // Save updated flow state
           await updateFlowState(
             conversation.id,
@@ -140,7 +155,7 @@ export async function POST(request: NextRequest) {
           );
 
           // Send all response messages
-          for (const msg of flowResult.messages) {
+          for (const msg of messagesToSend) {
             await sendFlowMessage(customerPhone, msg);
 
             // Store outbound message
