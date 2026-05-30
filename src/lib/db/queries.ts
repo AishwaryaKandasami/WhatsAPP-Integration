@@ -43,11 +43,13 @@ interface OrderRow {
 // ─── Conversations ───────────────────────────────────────────────
 
 /**
- * Get or create a conversation for a customer phone number
+ * Get or create a conversation for a customer phone number.
+ * Sessions auto-expire after sessionTimeoutMinutes (default 30).
  */
 export async function getOrCreateConversation(
   customerPhone: string,
-  customerName?: string
+  customerName?: string,
+  sessionTimeoutMinutes: number = 30
 ): Promise<ConversationRow> {
   const db = supabase();
 
@@ -64,19 +66,28 @@ export async function getOrCreateConversation(
   const existingRow = existing as ConversationRow | null;
 
   if (existingRow) {
-    // Update last activity + name if we have a better one
-    if (customerName && customerName !== existingRow.customer_name) {
+    // Check session timeout
+    const updatedAt = new Date(existingRow.updated_at).getTime();
+    const now = Date.now();
+    const minutesSinceUpdate = (now - updatedAt) / (1000 * 60);
+
+    if (minutesSinceUpdate > sessionTimeoutMinutes) {
+      // Session expired — close old conversation
+      console.log(`[Session] Conversation ${existingRow.id} expired (${Math.round(minutesSinceUpdate)}min idle). Creating new.`);
       await db
         .from("conversations")
-        .update({ customer_name: customerName, updated_at: new Date().toISOString() })
+        .update({ status: "completed", updated_at: new Date().toISOString() })
         .eq("id", existingRow.id);
+      // Fall through to create new conversation
     } else {
-      await db
-        .from("conversations")
-        .update({ updated_at: new Date().toISOString() })
-        .eq("id", existingRow.id);
+      // Session still active — update timestamp and return
+      const updates: Record<string, string> = { updated_at: new Date().toISOString() };
+      if (customerName && customerName !== existingRow.customer_name) {
+        updates.customer_name = customerName;
+      }
+      await db.from("conversations").update(updates).eq("id", existingRow.id);
+      return existingRow;
     }
-    return existingRow;
   }
 
   // Create new conversation
@@ -96,6 +107,54 @@ export async function getOrCreateConversation(
   }
 
   return created as ConversationRow;
+}
+
+/**
+ * Get the flow state and data for a conversation.
+ */
+export async function getFlowState(
+  conversationId: string
+): Promise<{ flow_state: string; flow_data: Record<string, unknown> }> {
+  const db = supabase();
+
+  const { data, error } = await db
+    .from("conversations")
+    .select("flow_state, flow_data")
+    .eq("id", conversationId)
+    .single();
+
+  if (error || !data) {
+    return { flow_state: "start", flow_data: {} };
+  }
+
+  return {
+    flow_state: (data as { flow_state: string | null; flow_data: unknown }).flow_state ?? "start",
+    flow_data: ((data as { flow_state: string | null; flow_data: unknown }).flow_data ?? {}) as Record<string, unknown>,
+  };
+}
+
+/**
+ * Update the flow state and data for a conversation.
+ */
+export async function updateFlowState(
+  conversationId: string,
+  flowState: string,
+  flowData: Record<string, unknown>
+): Promise<void> {
+  const db = supabase();
+
+  const { error } = await db
+    .from("conversations")
+    .update({
+      flow_state: flowState,
+      flow_data: flowData,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", conversationId);
+
+  if (error) {
+    console.error("Failed to update flow state:", error);
+  }
 }
 
 // ─── Messages ────────────────────────────────────────────────────

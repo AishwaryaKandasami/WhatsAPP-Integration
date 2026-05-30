@@ -3,18 +3,23 @@ import {
   verifyWebhookSignature,
   extractMessages,
   getMessageText,
+  parseMessage,
   sendTextReply,
+  sendButtonMessage,
+  sendListMessage,
   notifySeller,
   markAsRead,
 } from "@/lib/whatsapp/client";
 import type { WebhookBody } from "@/lib/whatsapp/types";
 import { processMessage } from "@/lib/ai/conversation";
-import { processFoodMessage } from "@/lib/ai/food-conversation";
 import {
   getOrCreateConversation,
   storeMessage,
   getConversationHistory,
+  getFlowState,
+  updateFlowState,
 } from "@/lib/db/queries";
+import { handleFlowStep, emptyFlowData, type FlowData, type FlowState, type FlowMessage } from "@/lib/flow/food-flow";
 
 /**
  * GET /api/webhooks/whatsapp
@@ -65,9 +70,9 @@ export async function POST(request: NextRequest) {
 
     // 3. Process each message
     for (const { message, contact } of incoming) {
-      // Skip non-processable message types
-      const messageText = getMessageText(message);
-      if (!messageText) {
+      // Parse message with structured interaction data
+      const parsed = parseMessage(message);
+      if (!parsed.text) {
         console.log(`Skipping message type: ${message.type}`);
         continue;
       }
@@ -76,7 +81,7 @@ export async function POST(request: NextRequest) {
       const customerName = contact?.profile?.name ?? "Customer";
 
       console.log(
-        `Message from ${customerName} (${customerPhone}): ${messageText.slice(0, 100)}`
+        `Message from ${customerName} (${customerPhone}): ${parsed.text.slice(0, 100)}`
       );
 
       // Don't process messages from the seller's own number (avoid loops)
@@ -90,7 +95,7 @@ export async function POST(request: NextRequest) {
         // Mark as read (blue ticks)
         await markAsRead(message.id);
 
-        // 4. Get or create conversation
+        // 4. Get or create conversation (with 30-min session timeout)
         const conversation = await getOrCreateConversation(
           customerPhone,
           customerName
@@ -100,50 +105,67 @@ export async function POST(request: NextRequest) {
         await storeMessage(
           conversation.id,
           "inbound",
-          messageText,
+          parsed.text,
           message.type,
           message.id
         );
 
-        // 6. Get conversation history for context
-        const history = await getConversationHistory(conversation.id);
-
-        // 7. Process through AI (branch based on BOT_MODE)
+        // 7. Process based on BOT_MODE
         const botMode = process.env.BOT_MODE || "embroidery";
 
         if (botMode === "food") {
-          // ── Food bot flow ──
-          const aiResponse = await processFoodMessage(
-            messageText,
-            history,
-            customerName,
-            { conversationId: conversation.id, customerPhone }
+          // ── Food bot: flow-based with interactive messages ──
+          const { flow_state, flow_data } = await getFlowState(conversation.id);
+
+          const flowResult = await handleFlowStep(
+            flow_state as FlowState,
+            (flow_data as unknown as FlowData) ?? emptyFlowData(),
+            {
+              text: parsed.text,
+              type: parsed.type,
+              interactionId: parsed.interactionId,
+            },
+            {
+              customerPhone,
+              conversationId: conversation.id,
+              customerName,
+            }
           );
 
-          const { messageId: replyMessageId } = await sendTextReply(
-            customerPhone,
-            aiResponse.reply
-          );
-
-          await storeMessage(
+          // Save updated flow state
+          await updateFlowState(
             conversation.id,
-            "outbound",
-            aiResponse.reply,
-            "text",
-            replyMessageId
+            flowResult.newState,
+            flowResult.newData as unknown as Record<string, unknown>
           );
 
-          if (aiResponse.orderConfirmed && aiResponse.orderSummary) {
+          // Send all response messages
+          for (const msg of flowResult.messages) {
+            await sendFlowMessage(customerPhone, msg);
+
+            // Store outbound message
+            await storeMessage(
+              conversation.id,
+              "outbound",
+              msg.text,
+              "text"
+            );
+          }
+
+          // Notify seller if order confirmed
+          if (flowResult.orderConfirmed && flowResult.orderSummary) {
             console.log("Food order confirmed — notifying seller");
             await notifySeller(
-              aiResponse.orderSummary +
+              flowResult.orderSummary +
                 `\nCustomer phone: ${customerPhone}`
             );
           }
         } else {
-          // ── Embroidery bot flow (default) ──
+          // ── Embroidery bot flow (default — still AI-based) ──
+          const history = await getConversationHistory(conversation.id);
+
           const aiResponse = await processMessage(
-            messageText,
+            parsed.text,
             history,
             customerName
           );
@@ -192,5 +214,33 @@ export async function POST(request: NextRequest) {
     console.error("Webhook handler error:", err);
     // Still return 200 to prevent Meta from retrying
     return NextResponse.json({ status: "error" }, { status: 200 });
+  }
+}
+
+/**
+ * Send a flow message (text, buttons, or list) via WhatsApp
+ */
+async function sendFlowMessage(to: string, msg: FlowMessage) {
+  switch (msg.type) {
+    case "buttons":
+      if (msg.buttons && msg.buttons.length > 0) {
+        return sendButtonMessage(to, msg.text, msg.buttons);
+      }
+      return sendTextReply(to, msg.text);
+
+    case "list":
+      if (msg.listSections && msg.listSections.length > 0) {
+        return sendListMessage(
+          to,
+          msg.text,
+          msg.listButtonText ?? "View Options",
+          msg.listSections
+        );
+      }
+      return sendTextReply(to, msg.text);
+
+    case "text":
+    default:
+      return sendTextReply(to, msg.text);
   }
 }

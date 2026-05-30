@@ -13,9 +13,18 @@ export default function FoodDemo() {
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Unique session ID per page load — prevents context pollution
+  const sessionIdRef = useRef(crypto.randomUUID());
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  function handleNewChat() {
+    sessionIdRef.current = crypto.randomUUID();
+    setMessages([]);
+    setInput("");
+  }
 
   async function handleSend() {
     if (!input.trim() || loading) return;
@@ -34,8 +43,23 @@ export default function FoodDemo() {
       const res = await fetch("/api/food-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMessage }),
+        body: JSON.stringify({
+          message: userMessage,
+          sessionId: sessionIdRef.current,
+        }),
       });
+
+      if (res.status === 429) {
+        setMessages([
+          ...updatedMessages,
+          {
+            role: "assistant",
+            content:
+              "Daily request limit reached. The free tier allows limited requests per day. Please try again tomorrow.",
+          },
+        ]);
+        return;
+      }
 
       const data = await res.json();
 
@@ -49,7 +73,7 @@ export default function FoodDemo() {
           ...updatedMessages,
           {
             role: "assistant",
-            content: `Error: ${data.error || "Unknown error"}`,
+            content: data.error || "Something went wrong. Please try again.",
           },
         ]);
       }
@@ -66,13 +90,23 @@ export default function FoodDemo() {
   return (
     <div className="flex flex-col h-screen bg-orange-50">
       {/* Header */}
-      <div className="bg-orange-600 text-white p-4 shadow">
-        <h1 className="text-lg font-semibold">
-          {String.fromCodePoint(0x1f35a)} Amma&apos;s Kitchen
-        </h1>
-        <p className="text-orange-100 text-sm">
-          Order homemade food on WhatsApp. Try English or Tanglish!
-        </p>
+      <div className="bg-orange-600 text-white p-4 shadow flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">
+            {String.fromCodePoint(0x1f35a)} Amma&apos;s Kitchen
+          </h1>
+          <p className="text-orange-100 text-sm">
+            Order homemade food on WhatsApp. Try English or Tanglish!
+          </p>
+        </div>
+        {messages.length > 0 && (
+          <button
+            onClick={handleNewChat}
+            className="bg-orange-700 hover:bg-orange-800 text-white text-xs font-medium px-3 py-1.5 rounded-full transition-colors"
+          >
+            New Chat
+          </button>
+        )}
       </div>
 
       {/* Messages */}
@@ -94,7 +128,7 @@ export default function FoodDemo() {
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`max-w-[75%] rounded-lg px-4 py-2 whitespace-pre-wrap text-sm ${
+              className={`max-w-[80%] rounded-lg px-4 py-2 whitespace-pre-wrap text-sm ${
                 msg.role === "user"
                   ? "bg-orange-500 text-white rounded-br-none"
                   : "bg-white text-gray-800 rounded-bl-none shadow"

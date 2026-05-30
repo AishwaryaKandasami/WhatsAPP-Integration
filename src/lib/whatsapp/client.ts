@@ -78,26 +78,56 @@ export function extractMessages(body: WebhookBody): Array<{
 }
 
 /**
- * Get the text content from any message type
+ * Parsed message with structured interaction data
+ */
+export interface ParsedMessage {
+  text: string | null;
+  type: "text" | "button_reply" | "list_reply" | "image" | "audio" | "other";
+  interactionId?: string;
+}
+
+/**
+ * Get the text content from any message type (legacy — returns text only)
  */
 export function getMessageText(message: IncomingMessage): string | null {
+  return parseMessage(message).text;
+}
+
+/**
+ * Parse a message into structured data with interaction ID
+ */
+export function parseMessage(message: IncomingMessage): ParsedMessage {
   switch (message.type) {
     case "text":
-      return message.text?.body ?? null;
+      return { text: message.text?.body ?? null, type: "text" };
     case "interactive":
       if (message.interactive?.type === "button_reply") {
-        return message.interactive.button_reply?.title ?? null;
+        return {
+          text: message.interactive.button_reply?.title ?? null,
+          type: "button_reply",
+          interactionId: message.interactive.button_reply?.id,
+        };
       }
       if (message.interactive?.type === "list_reply") {
-        return message.interactive.list_reply?.title ?? null;
+        return {
+          text: message.interactive.list_reply?.title ?? null,
+          type: "list_reply",
+          interactionId: message.interactive.list_reply?.id,
+        };
       }
-      return null;
+      return { text: null, type: "other" };
     case "image":
-      return message.image?.caption ?? "[Customer sent an image]";
+      return {
+        text: message.image?.caption ?? "[Customer sent an image]",
+        type: "image",
+      };
     case "audio":
-      return "[Customer sent a voice message — voice messages are not supported yet. Please type your message.]";
+      return {
+        text: "[Customer sent a voice message — voice messages are not supported yet. Please type your message.]",
+        type: "audio",
+      };
     default:
-      return null;
+      return { text: null, type: "other" };
   }
 }
 
@@ -162,6 +192,40 @@ export async function sendButtonMessage(
         buttons: buttons.slice(0, 3).map((b) => ({
           type: "reply" as const,
           reply: { id: b.id, title: b.title.slice(0, 20) },
+        })),
+      },
+    },
+  });
+}
+
+/**
+ * Send interactive list message (for menus, item selection)
+ */
+export async function sendListMessage(
+  to: string,
+  bodyText: string,
+  buttonText: string,
+  sections: Array<{
+    title: string;
+    rows: Array<{ id: string; title: string; description?: string }>;
+  }>
+) {
+  return sendMessage({
+    messaging_product: "whatsapp",
+    to,
+    type: "interactive",
+    interactive: {
+      type: "list",
+      body: { text: bodyText },
+      action: {
+        button: buttonText.slice(0, 20),
+        sections: sections.map((s) => ({
+          title: s.title,
+          rows: s.rows.map((r) => ({
+            id: r.id,
+            title: r.title.slice(0, 24),
+            description: r.description?.slice(0, 72),
+          })),
         })),
       },
     },
