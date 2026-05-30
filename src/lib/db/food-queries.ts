@@ -1,5 +1,15 @@
 import { supabase } from "./client";
 
+// ─── IST Timezone Helper ────────────────────────────────────────
+
+/**
+ * Get today's date in IST (Asia/Kolkata, UTC+5:30).
+ * Returns YYYY-MM-DD string.
+ */
+export function getTodayIST(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface MenuItemRow {
@@ -61,7 +71,7 @@ export async function getTodaysMenu(
   mealType?: string
 ): Promise<DailyMenuItemRow[]> {
   const db = supabase();
-  const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  const today = getTodayIST(); // YYYY-MM-DD
 
   // Check if daily_menu has any rows for today
   const { data: dailyRows, error: dailyError } = await db
@@ -256,7 +266,7 @@ export async function getDailyMenuStatus(
   date?: string
 ): Promise<Array<MenuItemRow & { available: boolean }>> {
   const db = supabase();
-  const targetDate = date ?? new Date().toISOString().split("T")[0];
+  const targetDate = date ?? getTodayIST();
 
   // Get all active menu items
   const items = await getAllMasterItems();
@@ -291,7 +301,7 @@ export async function updateDailyMenu(
   items: Array<{ menu_item_id: string; available: boolean }>
 ): Promise<void> {
   const db = supabase();
-  const today = new Date().toISOString().split("T")[0];
+  const today = getTodayIST();
 
   // Upsert each item
   for (const item of items) {
