@@ -11,8 +11,14 @@ import {
   markAsRead,
 } from "@/lib/whatsapp/client";
 import type { WebhookBody } from "@/lib/whatsapp/types";
-import { processMessage } from "@/lib/ai/conversation";
 import { groqFallbackReply } from "@/lib/ai/groq-fallback";
+import { embroideryFallbackReply } from "@/lib/ai/embroidery-fallback";
+import {
+  handleEmbroideryFlowStep,
+  emptyEmbroideryFlowData,
+  type EmbroideryFlowData,
+  type EmbroideryFlowState,
+} from "@/lib/flow/embroidery-flow";
 import {
   getOrCreateConversation,
   storeMessage,
@@ -176,33 +182,55 @@ export async function POST(request: NextRequest) {
             );
           }
         } else {
-          // ── Embroidery bot flow (default — still AI-based) ──
-          const history = await getConversationHistory(conversation.id);
+          // ── Embroidery bot: flow-based with interactive messages ──
+          const { flow_state, flow_data } = await getFlowState(conversation.id);
 
-          const aiResponse = await processMessage(
-            parsed.text,
-            history,
-            customerName
+          const flowResult = await handleEmbroideryFlowStep(
+            flow_state as EmbroideryFlowState,
+            (flow_data as unknown as EmbroideryFlowData) ??
+              emptyEmbroideryFlowData(),
+            {
+              text: parsed.text,
+              type: parsed.type,
+              interactionId: parsed.interactionId,
+            },
+            {
+              customerPhone,
+              conversationId: conversation.id,
+              customerName,
+            }
           );
 
-          const { messageId: replyMessageId } = await sendTextReply(
-            customerPhone,
-            aiResponse.reply
-          );
+          // ── Layer 3: AI fallback ──
+          // The flow couldn't parse this message — ask Groq for a catalog-grounded
+          // reply instead of the canned message.
+          let messagesToSend = flowResult.messages;
+          if (flowResult.needsAI && parsed.text) {
+            const history = await getConversationHistory(conversation.id);
+            const ai = await embroideryFallbackReply(parsed.text, {
+              history: history.slice(0, -1),
+            });
+            messagesToSend = [{ type: "text", text: ai.reply }];
+          }
 
-          await storeMessage(
+          // Save updated flow state
+          await updateFlowState(
             conversation.id,
-            "outbound",
-            aiResponse.reply,
-            "text",
-            replyMessageId
+            flowResult.newState,
+            flowResult.newData as unknown as Record<string, unknown>
           );
 
-          if (aiResponse.orderCreated && aiResponse.orderSummary) {
-            console.log("Order created — notifying seller");
+          // Send all response messages
+          for (const msg of messagesToSend) {
+            await sendFlowMessage(customerPhone, msg);
+            await storeMessage(conversation.id, "outbound", msg.text, "text");
+          }
+
+          // Notify seller if order confirmed
+          if (flowResult.orderConfirmed && flowResult.orderSummary) {
+            console.log("Embroidery order confirmed — notifying seller");
             await notifySeller(
-              aiResponse.orderSummary +
-                `\nCustomer phone: ${customerPhone}`
+              flowResult.orderSummary + `\nCustomer phone: ${customerPhone}`
             );
           }
         }

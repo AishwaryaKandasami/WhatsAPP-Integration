@@ -1,6 +1,7 @@
 import { getTodaysMenu, saveFoodOrder, getFoodBusinessConfig } from "@/lib/db/food-queries";
 import type { DailyMenuItemRow } from "@/lib/db/food-queries";
 import { checkFaq } from "./faq-router";
+import type { FlowMessage, MessageInput } from "./types";
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -31,22 +32,9 @@ export interface FlowData {
   pending_item: { item_key: string; name: string; price: number } | null;
 }
 
-export interface MessageInput {
-  text: string | null;
-  type: "text" | "button_reply" | "list_reply" | "image" | "audio" | "other";
-  interactionId?: string;
-}
-
-export interface FlowMessage {
-  type: "text" | "buttons" | "list";
-  text: string;
-  buttons?: Array<{ id: string; title: string }>;
-  listSections?: Array<{
-    title: string;
-    rows: Array<{ id: string; title: string; description: string }>;
-  }>;
-  listButtonText?: string;
-}
+// FlowMessage & MessageInput are shared across bots — defined in ./types.
+// Re-exported so existing imports from "@/lib/flow/food-flow" keep working.
+export type { FlowMessage, MessageInput };
 
 export interface FlowResult {
   newState: FlowState;
