@@ -29,6 +29,11 @@ export default function KitchenMenuPage() {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const [toggles, setToggles] = useState<Record<string, boolean>>({});
+  const [servedMeals, setServedMeals] = useState<{
+    breakfast: boolean;
+    lunch: boolean;
+    dinner: boolean;
+  }>({ breakfast: true, lunch: true, dinner: true });
 
   // Try loading menu on mount (cookie might still be valid)
   useEffect(() => {
@@ -44,6 +49,7 @@ export default function KitchenMenuPage() {
         const data = await res.json();
         setMenu(data.items);
         initToggles(data.items);
+        if (data.servedMeals) setServedMeals(data.servedMeals);
         setAuthenticated(true);
       }
     } catch {
@@ -80,6 +86,13 @@ export default function KitchenMenuPage() {
       if (res.ok) {
         setAuthenticated(true);
         await tryLoadMenu();
+      } else if (res.status === 500) {
+        // KITCHEN_PIN isn't set on this environment's server.
+        setPinError(
+          "Server has no PIN configured (KITCHEN_PIN missing). On Vercel: add it, then redeploy."
+        );
+      } else if (res.status === 404) {
+        setPinError("Login endpoint not found — this build isn't deployed here yet.");
       } else {
         setPinError("Wrong PIN. Try again.");
       }
@@ -92,6 +105,11 @@ export default function KitchenMenuPage() {
 
   function handleToggle(itemId: string) {
     setToggles((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+    setSaveMessage("");
+  }
+
+  function handleServeToggle(meal: "breakfast" | "lunch" | "dinner") {
+    setServedMeals((prev) => ({ ...prev, [meal]: !prev[meal] }));
     setSaveMessage("");
   }
 
@@ -108,7 +126,7 @@ export default function KitchenMenuPage() {
       const res = await fetch("/api/kitchen/menu", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
+        body: JSON.stringify({ items, servedMeals }),
       });
 
       if (res.ok) {
@@ -191,21 +209,80 @@ export default function KitchenMenuPage() {
   return (
     <div className="min-h-screen bg-orange-50">
       {/* Header */}
-      <div className="bg-orange-600 text-white p-4 shadow sticky top-0 z-10">
-        <h1 className="text-lg font-bold">
-          {String.fromCodePoint(0x1f373)} Today&apos;s Menu
-        </h1>
-        <p className="text-orange-100 text-sm">{today}</p>
+      <div className="bg-orange-600 text-white p-4 shadow sticky top-0 z-10 flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold">
+            {String.fromCodePoint(0x1f373)} Today&apos;s Menu
+          </h1>
+          <p className="text-orange-100 text-sm">{today}</p>
+        </div>
+        <a
+          href="/kitchen/orders"
+          className="shrink-0 bg-white/20 hover:bg-white/30 text-white text-sm font-semibold rounded-lg px-3 py-2"
+        >
+          Orders {String.fromCodePoint(0x2192)}
+        </a>
       </div>
 
       {/* Menu Sections */}
       <div className="p-4 space-y-4 pb-28">
+        {/* Meals you serve — per-client master switches */}
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-orange-100 px-4 py-3 border-b border-orange-200">
+            <h2 className="font-bold text-orange-800">
+              {String.fromCodePoint(0x2699)} Meals you serve
+            </h2>
+            <p className="text-orange-700 text-xs mt-0.5 opacity-80">
+              Turn off any meal you never offer. Customers won&apos;t see it at
+              all.
+            </p>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {sections.map(({ key, label, emoji }) => (
+              <div
+                key={key}
+                className="flex items-center justify-between px-4 py-3"
+              >
+                <div className="font-medium text-gray-800 text-sm">
+                  {String.fromCodePoint(emoji)} {label}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleServeToggle(key)}
+                  className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    servedMeals[key] ? "bg-orange-500" : "bg-gray-200"
+                  }`}
+                  role="switch"
+                  aria-checked={servedMeals[key]}
+                  aria-label={`Serve ${label}`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      servedMeals[key] ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {sections.map(({ key, label, emoji }) => (
-          <div key={key} className="bg-white rounded-xl shadow-sm overflow-hidden">
-            <div className="bg-orange-100 px-4 py-3 border-b border-orange-200">
+          <div
+            key={key}
+            className={`bg-white rounded-xl shadow-sm overflow-hidden transition-opacity ${
+              servedMeals[key] ? "" : "opacity-50"
+            }`}
+          >
+            <div className="bg-orange-100 px-4 py-3 border-b border-orange-200 flex items-center justify-between">
               <h2 className="font-bold text-orange-800">
                 {String.fromCodePoint(emoji)} {label}
               </h2>
+              {!servedMeals[key] && (
+                <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
+                  Not served
+                </span>
+              )}
             </div>
 
             <div className="divide-y divide-gray-100">

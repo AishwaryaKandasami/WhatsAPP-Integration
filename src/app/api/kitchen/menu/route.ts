@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getDailyMenuStatus, updateDailyMenu } from "@/lib/db/food-queries";
+import {
+  getDailyMenuStatus,
+  updateDailyMenu,
+  getFoodBusinessConfig,
+  updateServedMeals,
+} from "@/lib/db/food-queries";
 
 function isAuthenticated(request: NextRequest): boolean {
   return request.cookies.get("kitchen_auth")?.value === "true";
@@ -28,7 +33,21 @@ export async function GET(request: NextRequest) {
       dinner: items.filter((i) => i.meal_type === "dinner"),
     };
 
-    return NextResponse.json({ items: grouped });
+    // Per-client "meals we serve" switches. Default all true (and treat a
+    // missing flag as true) so the page still works before the 004 migration.
+    let servedMeals = { breakfast: true, lunch: true, dinner: true };
+    try {
+      const cfg = await getFoodBusinessConfig();
+      servedMeals = {
+        breakfast: cfg.serves_breakfast !== false,
+        lunch: cfg.serves_lunch !== false,
+        dinner: cfg.serves_dinner !== false,
+      };
+    } catch {
+      // Config unreadable — keep defaults (all served).
+    }
+
+    return NextResponse.json({ items: grouped, servedMeals });
   } catch (error) {
     console.error("Failed to get menu status:", error);
     return NextResponse.json(
@@ -53,16 +72,30 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const { items } = await request.json();
+    const { items, servedMeals } = await request.json();
 
-    if (!Array.isArray(items)) {
+    let didSomething = false;
+
+    if (Array.isArray(items)) {
+      await updateDailyMenu(items);
+      didSomething = true;
+    }
+
+    if (servedMeals && typeof servedMeals === "object") {
+      await updateServedMeals({
+        breakfast: !!servedMeals.breakfast,
+        lunch: !!servedMeals.lunch,
+        dinner: !!servedMeals.dinner,
+      });
+      didSomething = true;
+    }
+
+    if (!didSomething) {
       return NextResponse.json(
-        { error: "Invalid request body — expected { items: [...] }" },
+        { error: "Invalid request body — expected { items: [...] } and/or { servedMeals: {...} }" },
         { status: 400 }
       );
     }
-
-    await updateDailyMenu(items);
 
     return NextResponse.json({ success: true });
   } catch (error) {

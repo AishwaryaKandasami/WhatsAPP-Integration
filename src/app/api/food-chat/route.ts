@@ -12,6 +12,7 @@ import {
   type FlowData,
   type FlowState,
   type FlowMessage,
+  type MessageInput,
 } from "@/lib/flow/food-flow";
 import { groqFallbackReply } from "@/lib/ai/groq-fallback";
 
@@ -23,7 +24,8 @@ import { groqFallbackReply } from "@/lib/ai/groq-fallback";
  */
 export async function POST(request: NextRequest) {
   try {
-    const { message, sessionId } = await request.json();
+    const { message, sessionId, interactionId, interactionType } =
+      await request.json();
 
     if (!message || typeof message !== "string") {
       return NextResponse.json(
@@ -47,11 +49,17 @@ export async function POST(request: NextRequest) {
     // Get current flow state
     const { flow_state, flow_data } = await getFlowState(conversation.id);
 
-    // Run through the flow engine
+    // Run through the flow engine.
+    // interactionType/interactionId arrive when the user TAPS a button or list
+    // row in the demo UI (mirrors WhatsApp interactive replies).
     const flowResult = await handleFlowStep(
       flow_state as FlowState,
       (flow_data as unknown as FlowData) ?? emptyFlowData(),
-      { text: message, type: "text" },
+      {
+        text: message,
+        type: (interactionType as MessageInput["type"]) || "text",
+        interactionId: interactionId || undefined,
+      },
       {
         conversationId: conversation.id,
         customerPhone: demoPhone,
@@ -108,6 +116,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       reply,
+      messages: messagesToSend,
       conversationId: conversation.id,
       orderConfirmed: flowResult.orderConfirmed ?? false,
       orderSummary: flowResult.orderSummary ?? null,

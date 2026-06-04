@@ -43,6 +43,9 @@ export interface FoodBusinessConfigRow {
   delivery_charge: number;
   delivery_note: string | null;
   payment_methods: string[];
+  serves_breakfast: boolean;
+  serves_lunch: boolean;
+  serves_dinner: boolean;
 }
 
 export interface FoodOrderRow {
@@ -191,6 +194,46 @@ export async function getFoodBusinessConfig(): Promise<FoodBusinessConfigRow> {
   return data as FoodBusinessConfigRow;
 }
 
+/**
+ * Update the per-client "meals we serve" master switches on the single
+ * business config row.
+ */
+export async function updateServedMeals(serves: {
+  breakfast: boolean;
+  lunch: boolean;
+  dinner: boolean;
+}): Promise<void> {
+  const db = supabase();
+
+  // There is exactly one config row — find its id, then update by id
+  // (Supabase requires a filter on UPDATE).
+  const { data: cfg, error: fetchErr } = await db
+    .from("food_business_config")
+    .select("id")
+    .limit(1)
+    .single();
+
+  if (fetchErr || !cfg) {
+    console.error("Failed to load config for served-meals update:", fetchErr);
+    throw fetchErr ?? new Error("No food business config found");
+  }
+
+  const { error } = await db
+    .from("food_business_config")
+    .update({
+      serves_breakfast: serves.breakfast,
+      serves_lunch: serves.lunch,
+      serves_dinner: serves.dinner,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", (cfg as { id: string }).id);
+
+  if (error) {
+    console.error("Failed to update served meals:", error);
+    throw error;
+  }
+}
+
 // ─── Food Orders ────────────────────────────────────────────────
 
 /**
@@ -233,6 +276,48 @@ export async function saveFoodOrder(order: {
   }
 
   return data as FoodOrderRow;
+}
+
+/**
+ * Get recent food orders, most recent first (for the kitchen orders page).
+ */
+export async function getFoodOrders(limit = 100): Promise<FoodOrderRow[]> {
+  const db = supabase();
+
+  const { data, error } = await db
+    .from("food_orders")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("Failed to fetch food orders:", error);
+    return [];
+  }
+
+  return (data ?? []) as FoodOrderRow[];
+}
+
+/**
+ * Update a single food order's status.
+ * Allowed values (enforced by the DB CHECK constraint):
+ * confirmed | preparing | out_for_delivery | delivered | cancelled
+ */
+export async function updateFoodOrderStatus(
+  orderId: string,
+  status: string
+): Promise<void> {
+  const db = supabase();
+
+  const { error } = await db
+    .from("food_orders")
+    .update({ status })
+    .eq("id", orderId);
+
+  if (error) {
+    console.error("Failed to update food order status:", error);
+    throw error;
+  }
 }
 
 // ─── Admin / Kitchen Page Queries ───────────────────────────────

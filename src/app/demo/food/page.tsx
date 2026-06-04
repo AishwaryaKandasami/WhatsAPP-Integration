@@ -1,14 +1,17 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import type { FlowMessage } from "@/lib/flow/food-flow";
 
-interface Message {
+interface ChatMessage {
   role: "user" | "assistant";
-  content: string;
+  text: string;
+  // Structured payload for assistant turns (text + buttons + lists).
+  flowMessages?: FlowMessage[];
 }
 
 export default function FoodDemo() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -26,65 +29,86 @@ export default function FoodDemo() {
     setInput("");
   }
 
-  async function handleSend() {
-    if (!input.trim() || loading) return;
+  // Core send — handles both typed text and button/list taps.
+  async function postMessage(
+    text: string,
+    interaction?: { id: string; type: "button_reply" | "list_reply" }
+  ) {
+    if (loading || !text.trim()) return;
 
-    const userMessage = input.trim();
-    setInput("");
     setLoading(true);
-
-    const updatedMessages: Message[] = [
+    const updated: ChatMessage[] = [
       ...messages,
-      { role: "user", content: userMessage },
+      { role: "user", text },
     ];
-    setMessages(updatedMessages);
+    setMessages(updated);
 
     try {
       const res = await fetch("/api/food-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: userMessage,
+          message: text,
           sessionId: sessionIdRef.current,
+          interactionId: interaction?.id,
+          interactionType: interaction?.type,
         }),
       });
 
       if (res.status === 429) {
         setMessages([
-          ...updatedMessages,
+          ...updated,
           {
             role: "assistant",
-            content:
-              "Daily request limit reached. The free tier allows limited requests per day. Please try again tomorrow.",
+            text: "Daily request limit reached. The free tier allows limited requests per day. Please try again tomorrow.",
           },
         ]);
         return;
       }
 
       const data = await res.json();
+      const flowMessages: FlowMessage[] = Array.isArray(data.messages)
+        ? data.messages
+        : [];
 
-      if (data.reply) {
+      if (flowMessages.length > 0) {
         setMessages([
-          ...updatedMessages,
-          { role: "assistant", content: data.reply },
+          ...updated,
+          { role: "assistant", text: data.reply ?? "", flowMessages },
+        ]);
+      } else if (data.reply) {
+        setMessages([
+          ...updated,
+          {
+            role: "assistant",
+            text: data.reply,
+            flowMessages: [{ type: "text", text: data.reply }],
+          },
         ]);
       } else {
         setMessages([
-          ...updatedMessages,
+          ...updated,
           {
             role: "assistant",
-            content: data.error || "Something went wrong. Please try again.",
+            text: data.error || "Something went wrong. Please try again.",
           },
         ]);
       }
     } catch {
       setMessages([
-        ...updatedMessages,
-        { role: "assistant", content: "Failed to connect to the server." },
+        ...updated,
+        { role: "assistant", text: "Failed to connect to the server." },
       ]);
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleSend() {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput("");
+    postMessage(text);
   }
 
   return (
@@ -122,22 +146,115 @@ export default function FoodDemo() {
           </div>
         )}
 
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-[80%] rounded-lg px-4 py-2 whitespace-pre-wrap text-sm ${
-                msg.role === "user"
-                  ? "bg-orange-500 text-white rounded-br-none"
-                  : "bg-white text-gray-800 rounded-bl-none shadow"
-              }`}
-            >
-              {msg.content}
+        {messages.map((msg, i) => {
+          const isLast = i === messages.length - 1;
+          const interactive = isLast && !loading && msg.role === "assistant";
+
+          if (msg.role === "user") {
+            return (
+              <div key={i} className="flex justify-end">
+                <div className="max-w-[80%] rounded-lg px-4 py-2 whitespace-pre-wrap text-sm bg-orange-500 text-white rounded-br-none">
+                  {msg.text}
+                </div>
+              </div>
+            );
+          }
+
+          // Assistant turn — render each flow message (text + buttons + lists).
+          const parts = msg.flowMessages ?? [
+            { type: "text" as const, text: msg.text },
+          ];
+
+          return (
+            <div key={i} className="flex flex-col items-start gap-2">
+              {parts.map((fm, j) => (
+                <div key={j} className="flex flex-col items-start gap-2 w-full">
+                  {fm.text && (
+                    <div className="max-w-[80%] rounded-lg px-4 py-2 whitespace-pre-wrap text-sm bg-white text-gray-800 rounded-bl-none shadow">
+                      {fm.text}
+                    </div>
+                  )}
+
+                  {/* Reply buttons */}
+                  {fm.type === "buttons" && fm.buttons && (
+                    <div className="flex flex-col gap-2 w-full max-w-[80%]">
+                      {fm.buttons.map((b) => (
+                        <button
+                          key={b.id}
+                          disabled={!interactive}
+                          onClick={() =>
+                            postMessage(b.title, {
+                              id: b.id,
+                              type: "button_reply",
+                            })
+                          }
+                          className={`w-full text-center text-sm font-medium px-4 py-2 rounded-full border transition-colors ${
+                            interactive
+                              ? "bg-white border-orange-500 text-orange-600 hover:bg-orange-50 cursor-pointer"
+                              : "bg-gray-50 border-gray-200 text-gray-400 cursor-default"
+                          }`}
+                        >
+                          {b.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* List rows */}
+                  {fm.type === "list" && fm.listSections && (
+                    <div className="flex flex-col gap-2 w-full max-w-[85%]">
+                      {fm.listSections.map((section, si) => (
+                        <div key={si} className="flex flex-col gap-2">
+                          {section.title && (
+                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide px-1">
+                              {section.title}
+                            </p>
+                          )}
+                          {section.rows.map((row) => (
+                            <button
+                              key={row.id}
+                              disabled={!interactive}
+                              onClick={() =>
+                                postMessage(row.title, {
+                                  id: row.id,
+                                  type: "list_reply",
+                                })
+                              }
+                              className={`w-full text-left px-4 py-2.5 rounded-lg border transition-colors ${
+                                interactive
+                                  ? "bg-white border-gray-200 hover:border-orange-400 hover:bg-orange-50 cursor-pointer"
+                                  : "bg-gray-50 border-gray-200 cursor-default"
+                              }`}
+                            >
+                              <span
+                                className={`block text-sm font-medium ${
+                                  interactive ? "text-gray-800" : "text-gray-400"
+                                }`}
+                              >
+                                {row.title}
+                              </span>
+                              {row.description && (
+                                <span
+                                  className={`block text-xs mt-0.5 ${
+                                    interactive
+                                      ? "text-gray-500"
+                                      : "text-gray-300"
+                                  }`}
+                                >
+                                  {row.description}
+                                </span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {loading && (
           <div className="flex justify-start">

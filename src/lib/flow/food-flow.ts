@@ -91,6 +91,22 @@ function getMealTypeForTime(): string {
   return "dinner";
 }
 
+// Which meals can still be ordered right now (IST):
+//   before 12 PM → breakfast, lunch, dinner   (whole day still open)
+//   12 PM–2 PM   → lunch, dinner
+//   after 2 PM   → dinner only
+// Narrowed further by what the client actually offers (see computeAvailableMeals).
+function getAvailableMealsForTime(): string[] {
+  const now = new Date();
+  const istStr = now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+  const ist = new Date(istStr);
+  const hour = ist.getHours();
+
+  if (hour < 12) return ["breakfast", "lunch", "dinner"];
+  if (hour < 14) return ["lunch", "dinner"];
+  return ["dinner"];
+}
+
 function getDeliveryEstimate(mealType: string): string {
   switch (mealType) {
     case "breakfast": return "7:30 AM - 9:30 AM";
@@ -181,29 +197,12 @@ export async function handleFlowStep(
 // ─── State Handlers ─────────────────────────────────────────────
 
 async function handleStart(data: FlowData, input: MessageInput): Promise<FlowResult> {
-  // Any message triggers greeting with meal type buttons
-  const suggestedMeal = getMealTypeForTime();
-  const freshData = emptyFlowData();
-
-  return {
-    newState: "greeting",
-    newData: freshData,
-    messages: [
-      {
-        type: "text",
-        text: `Vanakkam! Welcome to Amma's Kitchen! What would you like to order today?`,
-      },
-      {
-        type: "buttons",
-        text: `It's ${suggestedMeal} time! Pick a meal type:`,
-        buttons: [
-          { id: "meal_breakfast", title: "Breakfast" },
-          { id: "meal_lunch", title: "Lunch" },
-          { id: "meal_dinner", title: "Dinner" },
-        ],
-      },
-    ],
-  };
+  // Show only the meals that are both within the current time window and on the
+  // client's menu today: all 3 in the morning, lunch+dinner after 12 PM, dinner
+  // after 2 PM — and when a single meal qualifies, open its menu directly.
+  void data;
+  void input;
+  return showStartMenu();
 }
 
 async function handleGreeting(data: FlowData, input: MessageInput): Promise<FlowResult> {
@@ -225,66 +224,177 @@ async function handleGreeting(data: FlowData, input: MessageInput): Promise<Flow
   }
 
   if (!mealType) {
-    // Can't determine meal type — ask AI or default
-    mealType = getMealTypeForTime();
+    // Couldn't read a meal from the tap/text — keep the one they're already on
+    // (e.g. "Add More" mid-order), otherwise fall back to the current meal by time.
+    mealType = data.meal_type ?? getMealTypeForTime();
   }
 
-  // Fetch menu items for this meal type
-  const items = await getTodaysMenu(mealType);
+  return showMealMenu(data, mealType, false);
+}
 
-  if (items.length === 0) {
+/**
+ * Meals we can actually take orders for at this moment:
+ *   (allowed by the current IST time window) ∩ (the client has items for today).
+ * This is what makes the bot adapt per client — a kitchen that doesn't do lunch
+ * simply has no lunch items, so lunch never appears. The owner controls this from
+ * the kitchen menu page by toggling items per meal.
+ */
+async function computeAvailableMeals(): Promise<string[]> {
+  const MEAL_ORDER = ["breakfast", "lunch", "dinner"];
+  const timeWindow = getAvailableMealsForTime();
+
+  // Master switches: meals the client serves at all (kitchen page).
+  // `!== false` means an unset/missing flag defaults to "served" — keeps the
+  // bot working even before the 004 migration adds these columns.
+  const served = new Set<string>(MEAL_ORDER);
+  try {
+    const cfg = await getFoodBusinessConfig();
+    if (cfg.serves_breakfast === false) served.delete("breakfast");
+    if (cfg.serves_lunch === false) served.delete("lunch");
+    if (cfg.serves_dinner === false) served.delete("dinner");
+  } catch {
+    // Config unreadable — fail open (treat all meals as served).
+  }
+
+  // Daily reality: meals that actually have items today.
+  const todaysItems = await getTodaysMenu();
+  const offered = new Set(todaysItems.map((i) => i.meal_type));
+
+  return MEAL_ORDER.filter(
+    (m) => timeWindow.includes(m) && served.has(m) && offered.has(m)
+  );
+}
+
+/**
+ * First-message entry point.
+ *   • 0 meals available → "not taking orders" note
+ *   • 1 meal           → jump straight into that menu (no pointless picker)
+ *   • 2-3 meals        → greet + show only those meal-type buttons
+ */
+async function showStartMenu(): Promise<FlowResult> {
+  const available = await computeAvailableMeals();
+
+  if (available.length === 0) {
     return {
-      newState: "greeting",
-      newData: { ...data, meal_type: null },
+      newState: "start",
+      newData: emptyFlowData(),
       messages: [
         {
           type: "text",
-          text: `Sorry, no ${mealType} items available today. Try another meal:`,
-        },
-        {
-          type: "buttons",
-          text: "Pick a meal type:",
-          buttons: [
-            { id: "meal_breakfast", title: "Breakfast" },
-            { id: "meal_lunch", title: "Lunch" },
-            { id: "meal_dinner", title: "Dinner" },
-          ],
+          text: "Vanakkam! Amma's Kitchen isn't taking orders right now. Please check back during our serving hours.",
         },
       ],
     };
   }
 
-  const newData: FlowData = { ...data, meal_type: mealType };
+  if (available.length === 1) {
+    return showMealMenu(emptyFlowData(), available[0], true);
+  }
 
-  // Build list message with menu items
+  const label = (m: string) => m.charAt(0).toUpperCase() + m.slice(1);
+  return {
+    newState: "greeting",
+    newData: emptyFlowData(),
+    messages: [
+      {
+        type: "buttons",
+        text: "Vanakkam! Welcome to Amma's Kitchen! What would you like to order?",
+        buttons: available.map((m) => ({ id: `meal_${m}`, title: label(m) })),
+      },
+    ],
+  };
+}
+
+/**
+ * Show the menu for a given meal as a tappable list.
+ * `withGreeting` adds the welcome line (used on the very first message).
+ * Falls back to meal-type buttons only if the meal has no items today.
+ */
+async function showMealMenu(
+  data: FlowData,
+  mealType: string,
+  withGreeting: boolean
+): Promise<FlowResult> {
+  const items = await getTodaysMenu(mealType);
+  const mealLabel = mealType.charAt(0).toUpperCase() + mealType.slice(1);
+
+  if (items.length === 0) {
+    // The requested meal has nothing today — offer the other meals that are both
+    // on the clock AND stocked, never one outside the current time window.
+    const available = await computeAvailableMeals();
+    if (available.length === 0) {
+      return {
+        newState: "start",
+        newData: emptyFlowData(),
+        messages: [
+          {
+            type: "text",
+            text: "Vanakkam! Amma's Kitchen isn't taking orders right now. Please check back during our serving hours.",
+          },
+        ],
+      };
+    }
+    const label = (m: string) => m.charAt(0).toUpperCase() + m.slice(1);
+    return {
+      newState: "greeting",
+      newData: { ...data, meal_type: null },
+      messages: [
+        {
+          type: "buttons",
+          text: withGreeting
+            ? `Vanakkam! Welcome to Amma's Kitchen! No ${mealType} right now — pick another:`
+            : `No ${mealType} items today. Try another meal:`,
+          buttons: available.map((m) => ({ id: `meal_${m}`, title: label(m) })),
+        },
+      ],
+    };
+  }
+
   const rows = items.map((item) => ({
     id: `item_${item.item_key}`,
     title: item.name.slice(0, 24),
     description: `Rs.${item.price} - ${item.description}`.slice(0, 72),
   }));
 
-  const mealLabel = mealType.charAt(0).toUpperCase() + mealType.slice(1);
+  const messages: FlowMessage[] = [];
+  if (withGreeting) {
+    messages.push({
+      type: "text",
+      text: `Vanakkam! Welcome to Amma's Kitchen! It's ${mealType} time.`,
+    });
+  }
+  messages.push({
+    type: "list",
+    text: `Today's ${mealLabel} menu — tap an item to order. (For another meal, type breakfast, lunch, or dinner.)`,
+    listButtonText: "View Menu",
+    listSections: [{ title: `${mealLabel} Items`, rows }],
+  });
 
   return {
     newState: "menu_shown",
-    newData,
-    messages: [
-      {
-        type: "list",
-        text: `Today's ${mealLabel} menu. Tap below to pick an item:`,
-        listButtonText: "View Menu",
-        listSections: [
-          {
-            title: `${mealLabel} Items`,
-            rows,
-          },
-        ],
-      },
-    ],
+    newData: { ...data, meal_type: mealType },
+    messages,
   };
 }
 
 async function handleMenuShown(data: FlowData, input: MessageInput): Promise<FlowResult> {
+  // Allow switching meals from the menu view (e.g. customer types "breakfast").
+  // Require the message to be essentially just the meal word so we don't hijack
+  // item orders like "2 sambar rice".
+  if (input.type === "text" && input.text) {
+    const t = input.text.toLowerCase().trim();
+    const switchMeal = /^(breakfast|tiffin)(\s*menu)?$/.test(t)
+      ? "breakfast"
+      : /^(lunch|saapadu)(\s*menu)?$/.test(t)
+        ? "lunch"
+        : /^dinner(\s*menu)?$/.test(t)
+          ? "dinner"
+          : null;
+    if (switchMeal && switchMeal !== data.meal_type) {
+      return showMealMenu(data, switchMeal, false);
+    }
+  }
+
   // User selected an item from the list
   let selectedItem: DailyMenuItemRow | null = null;
 
