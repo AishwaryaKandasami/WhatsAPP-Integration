@@ -3,6 +3,15 @@
 import { useState, useRef, useEffect } from "react";
 import type { FlowMessage } from "@/lib/flow/food-flow";
 
+// Prospect-facing CTA — opens a WhatsApp chat with the agency number,
+// not the configured seller's number. Update WHATSAPP_CTA_NUMBER if it changes.
+const WHATSAPP_CTA_NUMBER = "919442708293";
+const WHATSAPP_CTA_MESSAGE =
+  "Hi, I'd like to get this WhatsApp bot for my business";
+const WHATSAPP_CTA_URL = `https://wa.me/${WHATSAPP_CTA_NUMBER}?text=${encodeURIComponent(
+  WHATSAPP_CTA_MESSAGE
+)}`;
+
 interface ChatMessage {
   role: "user" | "assistant";
   text: string;
@@ -132,6 +141,16 @@ export default function FoodDemo() {
           </button>
         )}
       </div>
+
+      {/* Prospect CTA */}
+      <a
+        href={WHATSAPP_CTA_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="block bg-orange-100 hover:bg-orange-200 text-orange-800 text-center text-sm font-medium py-2 px-4 transition-colors"
+      >
+        Want this for your business? Chat with us on WhatsApp →
+      </a>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
