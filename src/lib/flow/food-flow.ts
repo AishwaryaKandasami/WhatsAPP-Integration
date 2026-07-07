@@ -7,6 +7,7 @@ import type { FlowMessage, MessageInput } from "./types";
 
 export type FlowState =
   | "start"
+  | "language_select"
   | "greeting"
   | "menu_shown"
   | "item_added"
@@ -26,6 +27,7 @@ export interface CartItem {
 export interface FlowData {
   cart: CartItem[];
   meal_type: string | null;
+  language: "english" | "tamil" | null;
   delivery_type: "delivery" | "pickup" | null;
   delivery_address: string | null;
   total: number;
@@ -51,11 +53,28 @@ function emptyFlowData(): FlowData {
   return {
     cart: [],
     meal_type: null,
+    language: null,
     delivery_type: null,
     delivery_address: null,
     total: 0,
     pending_item: null,
   };
+}
+
+// Reset the order but keep the language the customer already chose, so we don't
+// re-ask "English or Tamil?" after every order within the same session.
+function resetKeepingLanguage(data: FlowData): FlowData {
+  return { ...emptyFlowData(), language: data.language };
+}
+
+// Localized greeting/sign-off. English mode stays clean English (no Tamil words)
+// so non-Tamil speakers aren't defaulted into Tamil; Tamil mode adds Tanglish.
+function hello(language: FlowData["language"]): string {
+  return language === "tamil" ? "Vanakkam! " : "";
+}
+
+function thanks(language: FlowData["language"]): string {
+  return language === "tamil" ? "Nandri!" : "Thank you!";
 }
 
 function calculateTotal(cart: CartItem[]): number {
@@ -77,6 +96,31 @@ function getMealTypeForTime(): string {
   if (hour < 10) return "breakfast";
   if (hour < 15) return "lunch";
   return "dinner";
+}
+
+// The bot's display name. Per-client and set once per deploy via
+// SELLER_BUSINESS_NAME (falls back to the Supabase config, then a generic) so a
+// new kitchen never sees another business's name in its greetings.
+async function getBusinessName(): Promise<string> {
+  if (process.env.SELLER_BUSINESS_NAME) return process.env.SELLER_BUSINESS_NAME;
+  try {
+    const cfg = await getFoodBusinessConfig();
+    if (cfg?.business_name) return cfg.business_name;
+  } catch {
+    // config unreadable — fall through to the generic name
+  }
+  return "our kitchen";
+}
+
+// Read an explicitly-named meal out of free text ("lunch menu please",
+// "saapadu venum", "morning tiffin"). Returns null when no meal is named.
+function parseMealFromText(text?: string | null): string | null {
+  if (!text) return null;
+  const t = text.toLowerCase();
+  if (t.includes("breakfast") || t.includes("morning") || t.includes("tiffin")) return "breakfast";
+  if (t.includes("lunch") || t.includes("afternoon") || t.includes("saapadu")) return "lunch";
+  if (t.includes("dinner") || t.includes("evening") || t.includes("night")) return "dinner";
+  return null;
 }
 
 // Which meals can still be ordered right now (IST):
@@ -160,6 +204,8 @@ export async function handleFlowStep(
   switch (state) {
     case "start":
       return handleStart(data, input);
+    case "language_select":
+      return handleLanguageSelect(data, input);
     case "greeting":
       return handleGreeting(data, input);
     case "menu_shown":
@@ -175,22 +221,64 @@ export async function handleFlowStep(
     case "order_summary":
       return handleOrderSummary(data, input, context);
     case "confirmed":
-      // After confirmation, treat any new message as a fresh start
-      return handleStart(emptyFlowData(), input);
+      // After confirmation, treat any new message as a fresh start (keeping language)
+      return handleStart(resetKeepingLanguage(data), input);
     default:
-      return handleStart(emptyFlowData(), input);
+      return handleStart(resetKeepingLanguage(data), input);
   }
 }
 
 // ─── State Handlers ─────────────────────────────────────────────
 
 async function handleStart(data: FlowData, input: MessageInput): Promise<FlowResult> {
-  // Show only the meals that are both within the current time window and on the
-  // client's menu today: all 3 in the morning, lunch+dinner after 12 PM, dinner
-  // after 2 PM — and when a single meal qualifies, open its menu directly.
-  void data;
   void input;
-  return showStartMenu();
+
+  // First contact — establish the language before anything else, so non-Tamil
+  // speakers are never defaulted into Tamil.
+  if (!data.language) {
+    return showLanguagePicker();
+  }
+
+  return showStartMenu(data.language);
+}
+
+/** Ask the customer to pick a language before the ordering flow begins. */
+function showLanguagePicker(): FlowResult {
+  return {
+    newState: "language_select",
+    newData: emptyFlowData(),
+    messages: [
+      {
+        type: "buttons",
+        text: "Welcome! Please choose your language.\nமொழியைத் தேர்ந்தெடுக்கவும்.",
+        buttons: [
+          { id: "lang_english", title: "English" },
+          { id: "lang_tamil", title: "தமிழ் / Tamil" },
+        ],
+      },
+    ],
+  };
+}
+
+async function handleLanguageSelect(data: FlowData, input: MessageInput): Promise<FlowResult> {
+  void data;
+  let language: FlowData["language"] = null;
+
+  if (input.type === "button_reply" && input.interactionId) {
+    if (input.interactionId === "lang_english") language = "english";
+    else if (input.interactionId === "lang_tamil") language = "tamil";
+  }
+
+  if (!language && input.text) {
+    const t = input.text.toLowerCase();
+    if (t.includes("tamil") || t.includes("தமிழ்") || t.includes("tanglish")) language = "tamil";
+    else if (t.includes("english")) language = "english";
+  }
+
+  // Didn't understand the choice — ask again.
+  if (!language) return showLanguagePicker();
+
+  return showStartMenu(language);
 }
 
 async function handleGreeting(data: FlowData, input: MessageInput): Promise<FlowResult> {
@@ -205,10 +293,7 @@ async function handleGreeting(data: FlowData, input: MessageInput): Promise<Flow
 
   // Check for text-based meal selection
   if (!mealType && input.text) {
-    const t = input.text.toLowerCase();
-    if (t.includes("breakfast") || t.includes("morning") || t.includes("tiffin")) mealType = "breakfast";
-    else if (t.includes("lunch") || t.includes("afternoon") || t.includes("saapadu")) mealType = "lunch";
-    else if (t.includes("dinner") || t.includes("evening") || t.includes("night")) mealType = "dinner";
+    mealType = parseMealFromText(input.text);
   }
 
   if (!mealType) {
@@ -259,34 +344,37 @@ async function computeAvailableMeals(): Promise<string[]> {
  *   • 1 meal           → jump straight into that menu (no pointless picker)
  *   • 2-3 meals        → greet + show only those meal-type buttons
  */
-async function showStartMenu(): Promise<FlowResult> {
+async function showStartMenu(language: FlowData["language"]): Promise<FlowResult> {
   const available = await computeAvailableMeals();
+  const businessName = await getBusinessName();
+  const hi = hello(language);
+  const base: FlowData = { ...emptyFlowData(), language };
 
   if (available.length === 0) {
     return {
       newState: "start",
-      newData: emptyFlowData(),
+      newData: base,
       messages: [
         {
           type: "text",
-          text: "Vanakkam! Amma's Kitchen isn't taking orders right now. Please check back during our serving hours.",
+          text: `${hi}${businessName} isn't taking orders right now. Please check back during our serving hours.`,
         },
       ],
     };
   }
 
   if (available.length === 1) {
-    return showMealMenu(emptyFlowData(), available[0], true);
+    return showMealMenu(base, available[0], true);
   }
 
   const label = (m: string) => m.charAt(0).toUpperCase() + m.slice(1);
   return {
     newState: "greeting",
-    newData: emptyFlowData(),
+    newData: base,
     messages: [
       {
         type: "buttons",
-        text: "Vanakkam! Welcome to Amma's Kitchen! What would you like to order?",
+        text: `${hi}Welcome to ${businessName}! What would you like to order?`,
         buttons: available.map((m) => ({ id: `meal_${m}`, title: label(m) })),
       },
     ],
@@ -305,6 +393,8 @@ async function showMealMenu(
 ): Promise<FlowResult> {
   const items = await getTodaysMenu(mealType);
   const mealLabel = mealType.charAt(0).toUpperCase() + mealType.slice(1);
+  const businessName = await getBusinessName();
+  const hi = hello(data.language);
 
   if (items.length === 0) {
     // The requested meal has nothing today — offer the other meals that are both
@@ -313,11 +403,11 @@ async function showMealMenu(
     if (available.length === 0) {
       return {
         newState: "start",
-        newData: emptyFlowData(),
+        newData: resetKeepingLanguage(data),
         messages: [
           {
             type: "text",
-            text: "Vanakkam! Amma's Kitchen isn't taking orders right now. Please check back during our serving hours.",
+            text: `${hi}${businessName} isn't taking orders right now. Please check back during our serving hours.`,
           },
         ],
       };
@@ -330,7 +420,7 @@ async function showMealMenu(
         {
           type: "buttons",
           text: withGreeting
-            ? `Vanakkam! Welcome to Amma's Kitchen! No ${mealType} right now — pick another:`
+            ? `${hi}Welcome to ${businessName}! No ${mealType} right now — pick another:`
             : `No ${mealType} items today. Try another meal:`,
           buttons: available.map((m) => ({ id: `meal_${m}`, title: label(m) })),
         },
@@ -348,7 +438,7 @@ async function showMealMenu(
   if (withGreeting) {
     messages.push({
       type: "text",
-      text: `Vanakkam! Welcome to Amma's Kitchen! It's ${mealType} time.`,
+      text: `${hi}Welcome to ${businessName}! It's ${mealType} time.`,
     });
   }
   messages.push({
@@ -766,7 +856,7 @@ async function handleOrderSummary(
     if (input.interactionId === "cancel_order") {
       return {
         newState: "start",
-        newData: emptyFlowData(),
+        newData: resetKeepingLanguage(data),
         messages: [
           {
             type: "text",
@@ -785,7 +875,7 @@ async function handleOrderSummary(
     if (t.includes("no") || t.includes("cancel") || t.includes("venda")) {
       return {
         newState: "start",
-        newData: emptyFlowData(),
+        newData: resetKeepingLanguage(data),
         messages: [
           {
             type: "text",
@@ -855,13 +945,13 @@ async function handleOrderSummary(
 
   return {
     newState: "confirmed",
-    newData: emptyFlowData(),
+    newData: resetKeepingLanguage(data),
     orderConfirmed: true,
     orderSummary,
     messages: [
       {
         type: "text",
-        text: `Order confirmed! ${itemsText}. Total: Rs.${data.total}. ${deliveryInfo} by ${deliveryEstimate} IST. Payment on delivery. Nandri!`,
+        text: `Order confirmed! ${itemsText}. Total: Rs.${data.total}. ${deliveryInfo} by ${deliveryEstimate} IST. Payment on delivery. ${thanks(data.language)}`,
       },
     ],
   };

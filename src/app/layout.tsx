@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://whats-app-integration-six.vercel.app"),
   title: {
     default: "Your AI order assistant on WhatsApp",
-    template: "%s · WhatsApp Order Bot",
+    template: "%s · OrderGenie",
   },
   description:
     "Automate your home kitchen orders on WhatsApp. Never miss a customer. Open 24/7.",

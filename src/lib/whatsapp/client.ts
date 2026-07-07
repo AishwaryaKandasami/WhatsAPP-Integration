@@ -5,8 +5,18 @@ import type {
   IncomingMessage,
   WebhookContact,
 } from "./types";
+import { reportFailure } from "@/lib/monitoring";
 
 const META_API_BASE = "https://graph.facebook.com/v21.0";
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 300ms, then 900ms — brief backoff so a transient 429/5xx doesn't drop a reply.
+function backoffMs(attempt: number): number {
+  return 300 * Math.pow(3, attempt - 1);
+}
 
 function getConfig() {
   const token = process.env.META_WHATSAPP_TOKEN;
@@ -136,29 +146,63 @@ export function parseMessage(message: IncomingMessage): ParsedMessage {
  */
 export async function sendMessage(message: OutgoingMessage): Promise<{ messageId: string }> {
   const { token, phoneNumberId } = getConfig();
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`;
+  const maxAttempts = 3;
 
-  const response = await fetch(
-    `${META_API_BASE}/${phoneNumberId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(message),
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(message),
+      });
+    } catch (err) {
+      // Network-level failure — always retriable.
+      lastError = err;
+      if (attempt < maxAttempts) {
+        await sleep(backoffMs(attempt));
+        continue;
+      }
+      await reportFailure("whatsapp_send_failed", {
+        reason: "network",
+        attempt,
+        error: String(err),
+      });
+      throw err;
     }
-  );
 
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    console.error("WhatsApp API error:", JSON.stringify(error, null, 2));
-    throw new Error(
-      `WhatsApp API error: ${response.status} — ${JSON.stringify(error)}`
+    if (response.ok) {
+      const data = await response.json();
+      return { messageId: data.messages?.[0]?.id ?? "unknown" };
+    }
+
+    const errBody = await response.json().catch(() => ({}));
+    lastError = new Error(
+      `WhatsApp API error: ${response.status} — ${JSON.stringify(errBody)}`
     );
+
+    // Retry only rate limits and transient server errors; fail fast on 4xx.
+    const retriable = response.status === 429 || response.status >= 500;
+    if (retriable && attempt < maxAttempts) {
+      await sleep(backoffMs(attempt));
+      continue;
+    }
+
+    await reportFailure("whatsapp_send_failed", {
+      status: response.status,
+      attempt,
+      error: errBody,
+    });
+    throw lastError;
   }
 
-  const data = await response.json();
-  return { messageId: data.messages?.[0]?.id ?? "unknown" };
+  throw lastError ?? new Error("WhatsApp send failed");
 }
 
 /**

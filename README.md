@@ -1,36 +1,66 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# OrderGenie — WhatsApp AI ordering bot for food businesses
 
-## Getting Started
+An AI "employee" for home kitchens, cloud kitchens, and tiffin services. Customers
+message the business's WhatsApp number and the bot takes their order end-to-end —
+in **English, Tamil, or Tanglish** — then drops the confirmed order on the owner's
+phone. Built for Tamil Nadu D2C sellers.
 
-First, run the development server:
+**Live surfaces**
+- `/` — marketing landing page (pitch, ROI calculator, pricing)
+- `/demo/food` — interactive demo a prospect can try in the browser
+- `/api/webhooks/whatsapp` — the WhatsApp Cloud API webhook (the real bot)
+- `/kitchen/menu` — PIN-protected menu manager for the owner
+
+## How it works (3-layer hybrid)
+
+The bot minimizes AI cost by handling the common path deterministically and only
+calling an LLM when it has to:
+
+1. **FAQ router** (`src/lib/flow/faq-router.ts`) — fixed answers for delivery
+   questions. No AI.
+2. **Flow state machine** (`src/lib/flow/food-flow.ts`) — button/list-driven order
+   flow: pick meal → add items → cart → delivery/pickup → address → confirm. No AI
+   on the happy path.
+3. **AI fallback** (`src/lib/ai/groq-fallback.ts`) — only fires when the flow can't
+   parse free text (e.g. messy Tanglish). Uses Groq, and degrades to a safe canned
+   reply if AI is unavailable, so the bot never breaks.
+
+Confirmed orders are saved to Supabase and forwarded to the owner's WhatsApp. The
+owner can reply with a keyword (`PREPARING`, `OUT`, `DONE`) to advance the order and
+auto-notify the customer.
+
+## Tech stack
+
+- **Next.js 16** (App Router) + React 19 + TypeScript + Tailwind v4
+- **Supabase** (Postgres) — conversations, messages, orders, menu
+- **AI:** Google Gemini (primary, used by other flows) + Groq `llama-3.1-8b-instant`
+  (food fallback). _Note: an earlier plan referenced Claude; the shipped code uses
+  Gemini + Groq for cost._
+- **WhatsApp:** Meta Cloud API (direct, no BSP)
+- **Hosting:** Vercel
+
+> ⚠️ This repo pins **Next.js 16.2.6**, which has breaking changes vs. older docs.
+> Before editing Next.js code, read the relevant guide under
+> `node_modules/next/dist/docs/` (see `AGENTS.md`).
+
+## Local development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.local.example .env.local   # then fill in the values
+npm run dev                        # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`npm run lint` and `npx tsc --noEmit` should both pass before you push.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Configuration
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+All per-deploy config lives in environment variables — see
+[`.env.local.example`](.env.local.example) for the full annotated list. The bot is
+**single-tenant**: one deploy serves one business, selected by `BOT_MODE` and the
+`SELLER_*` values.
 
-## Learn More
+## Onboarding a new client
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+See [`docs/ONBOARDING.md`](docs/ONBOARDING.md) for the <30-minute runbook to take a
+new kitchen live (clone the deploy, set env, seed the menu, connect WhatsApp).

@@ -1,5 +1,6 @@
 import { getTodaysMenu, getFoodBusinessConfig } from "@/lib/db/food-queries";
 import { callGroq } from "./groq-client";
+import { logEvent } from "@/lib/monitoring";
 
 /**
  * Layer 3 of the food hybrid bot: AI fallback.
@@ -80,5 +81,16 @@ export async function groqFallbackReply(
     customerMessage,
     opts?.history
   );
+
+  // A key is configured but Groq didn't answer — the customer gets the canned
+  // reply. Track it so repeated degradation is visible in the logs.
+  if (!usedAI) {
+    logEvent(
+      "ai_fallback_degraded",
+      { messagePreview: customerMessage.slice(0, 80) },
+      "warn"
+    );
+  }
+
   return { reply: reply ?? deterministicFallback(), usedAI };
 }

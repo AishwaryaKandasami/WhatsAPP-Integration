@@ -299,6 +299,33 @@ export async function getFoodOrders(limit = 100): Promise<FoodOrderRow[]> {
 }
 
 /**
+ * Get the most recent still-in-progress food order (confirmed or preparing).
+ * Used to route a seller's WhatsApp reply ("PREPARING"/"OUT"/"DONE") to the
+ * order they're most likely responding to. Returns null if none is open.
+ */
+export async function getLatestActiveFoodOrder(): Promise<FoodOrderRow | null> {
+  const db = supabase();
+
+  const { data, error } = await db
+    .from("food_orders")
+    .select("*")
+    .in("status", ["confirmed", "preparing", "out_for_delivery"])
+    // Exclude in-browser demo orders (phone is "demo-<uuid>") — a seller reply
+    // must never route to a fake number.
+    .not("customer_phone", "like", "demo-%")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to fetch latest active food order:", error);
+    return null;
+  }
+
+  return (data as FoodOrderRow | null) ?? null;
+}
+
+/**
  * Update a single food order's status.
  * Allowed values (enforced by the DB CHECK constraint):
  * confirmed | preparing | out_for_delivery | delivered | cancelled

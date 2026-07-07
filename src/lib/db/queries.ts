@@ -185,6 +185,30 @@ export async function storeMessage(
 }
 
 /**
+ * Idempotency guard: has this Meta message id already been stored?
+ * Meta retries webhook deliveries, so without this a retry can double-process
+ * an order. Fails open (returns false) on error — dropping a message is worse
+ * than a rare duplicate.
+ */
+export async function messageExists(metaMessageId: string): Promise<boolean> {
+  const db = supabase();
+
+  const { data, error } = await db
+    .from("messages")
+    .select("id")
+    .eq("meta_message_id", metaMessageId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to check message existence:", error);
+    return false;
+  }
+
+  return !!data;
+}
+
+/**
  * Get recent messages for a conversation (for AI context)
  */
 export async function getConversationHistory(

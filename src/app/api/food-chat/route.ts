@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import {
   getOrCreateConversation,
   storeMessage,
@@ -16,6 +17,15 @@ import {
 } from "@/lib/flow/food-flow";
 import { groqFallbackReply } from "@/lib/ai/groq-fallback";
 
+// Validate the request body up front so malformed input, oversized text, or a
+// 5,000-char "address" can never reach the flow engine or the database.
+const foodChatSchema = z.object({
+  message: z.string().trim().min(1).max(1000),
+  sessionId: z.string().max(200).optional(),
+  interactionId: z.string().max(200).optional(),
+  interactionType: z.enum(["button_reply", "list_reply", "text"]).optional(),
+});
+
 /**
  * POST /api/food-chat
  *
@@ -24,15 +34,22 @@ import { groqFallbackReply } from "@/lib/ai/groq-fallback";
  */
 export async function POST(request: NextRequest) {
   try {
-    const { message, sessionId, interactionId, interactionType } =
-      await request.json();
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
 
-    if (!message || typeof message !== "string") {
+    const parsed = foodChatSchema.safeParse(rawBody);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Missing 'message' in request body" },
+        { error: "Invalid request", details: parsed.error.flatten() },
         { status: 400 }
       );
     }
+
+    const { message, sessionId, interactionId, interactionType } = parsed.data;
 
     // Each browser session gets a unique conversation
     const demoPhone = `demo-${sessionId || crypto.randomUUID()}`;
