@@ -18,7 +18,7 @@ export const revalidate = 300;
 export const metadata: Metadata = {
   title: "WhatsApp orders on autopilot for your kitchen",
   description:
-    "OrderGenie is the AI employee your home kitchen hires for ₹499/month — it takes orders on WhatsApp 24/7, in English and Tamil (including Tanglish), so you never miss a customer.",
+    "OrderGenie is the AI employee your home kitchen tries for free — it takes orders on WhatsApp 24/7, in English and Tamil (including Tanglish). See real results before you pay anything.",
 };
 
 export default function Home() {
@@ -77,21 +77,22 @@ function Hero() {
           For home kitchens, cloud kitchens &amp; tiffin services
         </span>
         <h1 className="mt-5 text-4xl font-extrabold leading-tight tracking-tight sm:text-5xl">
-          The AI employee your kitchen hires for{" "}
-          <span className="text-emerald-600">₹499/month</span>
+          The AI employee your kitchen hires —{" "}
+          <span className="text-emerald-600">try it free</span>
         </h1>
         <p className="mt-5 text-lg leading-relaxed text-slate-600">
           {BRAND} takes orders on WhatsApp <strong>24/7</strong> — in English
           and Tamil, including <em>Tanglish</em>. It shows your menu, builds the
           cart, confirms the address, and drops the order straight to your
-          phone. Never miss a hungry customer again.
+          phone. Try it free and watch real orders come in —{" "}
+          <strong>pay only once you&apos;ve seen it work.</strong>
         </p>
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <Link
             href={demoUrl}
             className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-6 py-3 text-base font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700"
           >
-            Try the live demo →
+            Try it free →
           </Link>
           <a
             href={getItUrl}
@@ -103,8 +104,8 @@ function Hero() {
           </a>
         </div>
         <p className="mt-4 text-sm text-slate-400">
-          No app to install · Works on your existing WhatsApp · Live in 10
-          minutes
+          Free to try, no card needed · Works on your existing WhatsApp · Live
+          in 10 minutes
         </p>
       </div>
 
@@ -421,8 +422,8 @@ function FinalCta() {
           Stop losing orders to “sorry, saw this late”
         </h2>
         <p className="mx-auto mt-4 max-w-xl text-emerald-50">
-          Try the live demo now, or message us and we’ll set up your kitchen’s
-          bot today.
+          Try it free and see real orders come in — or message us and we’ll
+          set up your kitchen’s bot today.
         </p>
         <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
           <Link
