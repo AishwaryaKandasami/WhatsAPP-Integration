@@ -28,6 +28,9 @@ export interface FlowData {
   cart: CartItem[];
   meal_type: string | null;
   language: "english" | "tamil" | null;
+  // The customer's opening message, stashed while we ask for language so we can
+  // honor it (a named meal or an item order) once the language is chosen.
+  pending_message: string | null;
   delivery_type: "delivery" | "pickup" | null;
   delivery_address: string | null;
   total: number;
@@ -54,6 +57,7 @@ function emptyFlowData(): FlowData {
     cart: [],
     meal_type: null,
     language: null,
+    pending_message: null,
     delivery_type: null,
     delivery_address: null,
     total: 0,
@@ -165,17 +169,31 @@ function parseQuantity(text: string): number | null {
   return null;
 }
 
-// Try to find a menu item matching text input
+// Try to find a menu item matching text input.
 function findItemInMenu(text: string, items: DailyMenuItemRow[]): DailyMenuItemRow | null {
   const q = text.toLowerCase().trim();
+  if (!q) return null;
   // Exact name match first
   const exact = items.find((i) => i.name.toLowerCase() === q);
   if (exact) return exact;
-  // Partial match
-  const partial = items.find(
-    (i) => i.name.toLowerCase().includes(q) || q.includes(i.name.toLowerCase())
-  );
-  return partial ?? null;
+  // The message contains the full item name, e.g. "i want idli set please".
+  const containsName = items.find((i) => q.includes(i.name.toLowerCase()));
+  if (containsName) return containsName;
+  // The query is a substring of an item name, e.g. "biryani" → "Chicken Biryani".
+  // Require length >= 4 so short greetings ("hi") don't match inside "chicken".
+  if (q.length >= 4) {
+    const partial = items.find((i) => i.name.toLowerCase().includes(q));
+    if (partial) return partial;
+  }
+  // Distinctive leading word of an item appears as a whole word in the message,
+  // e.g. "2 idli parcel venum" → "Idli Set (4 pcs)". Requiring the item's first
+  // word (idli, dosa, sambar…) to be length >= 3 avoids matching filler words.
+  const words = new Set(q.split(/\s+/).map((w) => w.replace(/[^a-z]/g, "")));
+  const byKeyword = items.find((i) => {
+    const first = i.name.toLowerCase().split(/\s+/)[0].replace(/[^a-z]/g, "");
+    return first.length >= 3 && words.has(first);
+  });
+  return byKeyword ?? null;
 }
 
 // ─── Flow Engine ────────────────────────────────────────────────
@@ -231,22 +249,30 @@ export async function handleFlowStep(
 // ─── State Handlers ─────────────────────────────────────────────
 
 async function handleStart(data: FlowData, input: MessageInput): Promise<FlowResult> {
-  void input;
-
   // First contact — establish the language before anything else, so non-Tamil
-  // speakers are never defaulted into Tamil.
+  // speakers are never defaulted into Tamil. Stash their opening message so we
+  // can honor it (a named meal, or an item order) once the language is known.
   if (!data.language) {
-    return showLanguagePicker();
+    return showLanguagePicker(input.text);
+  }
+
+  // Language already known (fresh start, or a new order after one completed):
+  // honor any meal/item in the message instead of just re-showing the menu.
+  if (input.text) {
+    return replayFirstMessage(data.language, input.text);
   }
 
   return showStartMenu(data.language);
 }
 
-/** Ask the customer to pick a language before the ordering flow begins. */
-function showLanguagePicker(): FlowResult {
+/**
+ * Ask the customer to pick a language before the ordering flow begins.
+ * `pendingMessage` is their opening line, stashed so we can act on it after.
+ */
+function showLanguagePicker(pendingMessage?: string | null): FlowResult {
   return {
     newState: "language_select",
-    newData: emptyFlowData(),
+    newData: { ...emptyFlowData(), pending_message: pendingMessage ?? null },
     messages: [
       {
         type: "buttons",
@@ -261,7 +287,6 @@ function showLanguagePicker(): FlowResult {
 }
 
 async function handleLanguageSelect(data: FlowData, input: MessageInput): Promise<FlowResult> {
-  void data;
   let language: FlowData["language"] = null;
 
   if (input.type === "button_reply" && input.interactionId) {
@@ -275,10 +300,111 @@ async function handleLanguageSelect(data: FlowData, input: MessageInput): Promis
     else if (t.includes("english")) language = "english";
   }
 
-  // Didn't understand the choice — ask again.
-  if (!language) return showLanguagePicker();
+  // Didn't understand the choice — ask again, keeping their original message.
+  if (!language) return showLanguagePicker(data.pending_message);
+
+  // Now that we know the language, act on the message they opened with.
+  if (data.pending_message) {
+    return replayFirstMessage(language, data.pending_message);
+  }
 
   return showStartMenu(language);
+}
+
+/**
+ * Process the customer's opening message now that the language is known.
+ *   - names an available meal ("lunch menu please")  → open that meal's menu
+ *   - names a closed meal ("lunch" at dinner time)    → say so, show what's open
+ *   - names an item ("2 idli parcel venum")           → match it and ask quantity
+ *   - names an item served at another meal today       → say when it's available
+ *   - anything else (a greeting, "what's today?")     → just show today's menu
+ * Deterministic only (no AI) so the first reply stays instant.
+ */
+async function replayFirstMessage(
+  language: FlowData["language"],
+  text: string
+): Promise<FlowResult> {
+  const base: FlowData = { ...emptyFlowData(), language };
+  const available = await computeAvailableMeals();
+
+  // (a) Opened by naming a meal.
+  const requested = parseMealFromText(text);
+  if (requested) {
+    if (available.includes(requested)) {
+      return showMealMenu(base, requested, true);
+    }
+    // Named a meal that's closed right now — say so, then show what's open.
+    return prefixMessage(
+      `Sorry, we're not taking ${requested} orders right now. Here's what you can order:`,
+      await openAvailableMeals(base, available, language)
+    );
+  }
+
+  if (available.length === 0) {
+    return showStartMenu(language);
+  }
+
+  // (b) Not a meal — open the current-time menu, then check for an item order.
+  const meal = available.includes(getMealTypeForTime())
+    ? getMealTypeForTime()
+    : available[0];
+  const menu = await showMealMenu(base, meal, true);
+
+  const follow = await handleMenuShown(menu.newData, { text, type: "text" });
+  if (follow.newState === "item_added") {
+    // Matched an item on the current menu — greet, then ask quantity.
+    const greeting = menu.messages.find((m) => m.type === "text");
+    return {
+      ...follow,
+      messages: greeting ? [greeting, ...follow.messages] : follow.messages,
+    };
+  }
+
+  // (c) The item they asked for may be served at a different meal today.
+  const elsewhere = findItemInMenu(text, await getTodaysMenu());
+  if (elsewhere && elsewhere.meal_type !== meal) {
+    const listOnly = menu.messages.filter((m) => m.type !== "text");
+    return {
+      ...menu,
+      messages: [
+        {
+          type: "text",
+          text: `${elsewhere.name} is on our ${elsewhere.meal_type} menu — we're serving ${meal} right now. Here's today's ${meal}:`,
+        },
+        ...listOnly,
+      ],
+    };
+  }
+
+  // (d) Nothing recognised — just show the menu (skip the AI nudge to stay snappy).
+  return menu;
+}
+
+/** Prepend a text line to an existing flow result's messages. */
+function prefixMessage(text: string, result: FlowResult): FlowResult {
+  return { ...result, messages: [{ type: "text", text }, ...result.messages] };
+}
+
+/** Open whatever meals are orderable now: the single menu, or a meal picker. */
+async function openAvailableMeals(
+  base: FlowData,
+  available: string[],
+  language: FlowData["language"]
+): Promise<FlowResult> {
+  if (available.length === 0) return showStartMenu(language);
+  if (available.length === 1) return showMealMenu(base, available[0], false);
+  const label = (m: string) => m.charAt(0).toUpperCase() + m.slice(1);
+  return {
+    newState: "greeting",
+    newData: base,
+    messages: [
+      {
+        type: "buttons",
+        text: "What would you like to order?",
+        buttons: available.map((m) => ({ id: `meal_${m}`, title: label(m) })),
+      },
+    ],
+  };
 }
 
 async function handleGreeting(data: FlowData, input: MessageInput): Promise<FlowResult> {
