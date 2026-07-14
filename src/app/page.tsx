@@ -126,7 +126,7 @@ function PhoneMock() {
           {String.fromCodePoint(0x1f35a)}
         </div>
         <div>
-          <p className="text-sm font-semibold leading-tight">AR Kitchen</p>
+          <p className="text-sm font-semibold leading-tight">SR Kitchen</p>
           <p className="text-[11px] text-green-100">online</p>
         </div>
       </div>
@@ -147,7 +147,7 @@ function PhoneMock() {
         </Bubble>
         <Bubble side="out">Ok confirm 👍</Bubble>
         <Bubble side="in">
-          Order confirmed! ✅ 30 min-la ready. AR Kitchen team ungala contact pannuvaanga.
+          Order confirmed! ✅ 30 min-la ready. SR Kitchen team ungala contact pannuvaanga.
         </Bubble>
       </div>
     </div>

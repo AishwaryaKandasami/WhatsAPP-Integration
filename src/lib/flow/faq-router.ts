@@ -50,27 +50,36 @@ function isDeliveryQuestion(text: string): boolean {
 }
 
 /**
- * Build the standard delivery-areas-and-charges answer from business config.
+ * Build the standard delivery-areas-and-charges answer from business config,
+ * in the same language the customer asked in (English or Tanglish).
  */
-function buildDeliveryAnswer(config: {
-  delivery_areas?: string[] | null;
-  delivery_charge?: number | null;
-  delivery_note?: string | null;
-  minimum_order?: number | null;
-}): string {
+function buildDeliveryAnswer(
+  config: {
+    delivery_areas?: string[] | null;
+    delivery_charge?: number | null;
+    delivery_note?: string | null;
+    minimum_order?: number | null;
+  },
+  language: "english" | "tanglish" = "english"
+): string {
+  const ta = language === "tanglish";
   const lines: string[] = [];
 
   const areas = (config.delivery_areas ?? []).filter(Boolean);
   if (areas.length > 0) {
-    lines.push(`We deliver to: ${areas.join(", ")}.`);
+    lines.push(ta ? `Naanga inga deliver panrom: ${areas.join(", ")}.` : `We deliver to: ${areas.join(", ")}.`);
   } else {
-    lines.push("Tell us your area and we'll check if we can deliver there.");
+    lines.push(
+      ta
+        ? "Unga area sollunga, deliver panna mudiyuma-nu paakkurom."
+        : "Tell us your area and we'll check if we can deliver there."
+    );
   }
 
   if (config.delivery_charge && config.delivery_charge > 0) {
-    lines.push(`Delivery charge: Rs.${config.delivery_charge}.`);
+    lines.push(ta ? `Delivery charge: Rs.${config.delivery_charge}.` : `Delivery charge: Rs.${config.delivery_charge}.`);
   } else {
-    lines.push("Delivery is FREE in our areas!");
+    lines.push(ta ? "Namma area-la delivery FREE!" : "Delivery is FREE in our areas!");
   }
 
   if (config.delivery_note) {
@@ -78,7 +87,7 @@ function buildDeliveryAnswer(config: {
   }
 
   if (config.minimum_order && config.minimum_order > 0) {
-    lines.push(`Minimum order: Rs.${config.minimum_order}.`);
+    lines.push(ta ? `Minimum order Rs.${config.minimum_order}.` : `Minimum order: Rs.${config.minimum_order}.`);
   }
 
   return lines.join("\n");
@@ -91,13 +100,16 @@ function buildDeliveryAnswer(config: {
  * IMPORTANT: callers should only run this for plain text messages, never for
  * button/list interactions (those are deterministic flow inputs).
  */
-export async function checkFaq(text: string | null | undefined): Promise<FaqMatch> {
+export async function checkFaq(
+  text: string | null | undefined,
+  language: "english" | "tanglish" = "english"
+): Promise<FaqMatch> {
   if (!text || !text.trim()) return { matched: false };
 
   if (isDeliveryQuestion(text)) {
     try {
       const config = await getFoodBusinessConfig();
-      return { matched: true, answer: buildDeliveryAnswer(config) };
+      return { matched: true, answer: buildDeliveryAnswer(config, language) };
     } catch (err) {
       console.error("[FAQ] Failed to load business config:", err);
       // Config unavailable — let the flow / AI handle it instead.

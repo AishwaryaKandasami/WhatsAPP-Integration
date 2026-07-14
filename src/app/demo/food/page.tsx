@@ -145,7 +145,7 @@ export default function FoodDemo() {
             </Link>
             <div>
               <h1 className="text-lg font-semibold">
-                {String.fromCodePoint(0x1f35a)} AR Kitchen
+                {String.fromCodePoint(0x1f35a)} SR Kitchen
               </h1>
               <p className="text-sm text-green-100">
                 Order homemade food on WhatsApp. Try English or Tanglish!

@@ -7,7 +7,6 @@ import type { FlowMessage, MessageInput } from "./types";
 
 export type FlowState =
   | "start"
-  | "language_select"
   | "greeting"
   | "menu_shown"
   | "item_added"
@@ -27,10 +26,9 @@ export interface CartItem {
 export interface FlowData {
   cart: CartItem[];
   meal_type: string | null;
-  language: "english" | "tamil" | null;
-  // The customer's opening message, stashed while we ask for language so we can
-  // honor it (a named meal or an item order) once the language is chosen.
-  pending_message: string | null;
+  // Auto-detected from the customer's message (no upfront picker). Tamil script
+  // is unsupported, so we only distinguish English vs Tanglish and mirror it.
+  language: "english" | "tanglish" | null;
   delivery_type: "delivery" | "pickup" | null;
   delivery_address: string | null;
   total: number;
@@ -57,7 +55,6 @@ function emptyFlowData(): FlowData {
     cart: [],
     meal_type: null,
     language: null,
-    pending_message: null,
     delivery_type: null,
     delivery_address: null,
     total: 0,
@@ -65,20 +62,44 @@ function emptyFlowData(): FlowData {
   };
 }
 
-// Reset the order but keep the language the customer already chose, so we don't
-// re-ask "English or Tamil?" after every order within the same session.
+// Reset the order but keep the language we detected, so the tone stays
+// consistent across a follow-up order in the same session.
 function resetKeepingLanguage(data: FlowData): FlowData {
   return { ...emptyFlowData(), language: data.language };
 }
 
-// Localized greeting/sign-off. English mode stays clean English (no Tamil words)
-// so non-Tamil speakers aren't defaulted into Tamil; Tamil mode adds Tanglish.
+// Distinctive romanised-Tamil words. If any appears (or Tamil script is used),
+// we treat the message as Tanglish and mirror it; otherwise English.
+const TANGLISH_MARKERS = [
+  "venum", "vendum", "venaam", "venda", "iruku", "iruka", "irukku", "irukka",
+  "enna", "epdi", "eppadi", "evlo", "evalavu", "evvalavu", "saapadu", "sapadu",
+  "sappadu", "rendu", "moonu", "naalu", "anju", "oru", "seri", "illa", "illai",
+  "vanakkam", "nandri", "kudunga", "kodunga", "pannunga", "panunga", "veetu",
+  "veedu", "romba", "konjam", "nalla", "thevai", "vaanga", "aacha", "inniki",
+  "innaikku", "podhum", "poarum", "kaasu", "parcel-a",
+];
+
+function detectLanguage(text?: string | null): "english" | "tanglish" {
+  if (!text) return "english";
+  if (/[஀-௿]/.test(text)) return "tanglish"; // Tamil script → Tanglish
+  const words = new Set(
+    text.toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z]/g, ""))
+  );
+  return TANGLISH_MARKERS.some((m) => words.has(m)) ? "tanglish" : "english";
+}
+
+// Mirror the customer's language for the copy we control.
+function say(language: FlowData["language"], en: string, ta: string): string {
+  return language === "tanglish" ? ta : en;
+}
+
+// Greeting / sign-off. English stays clean English; Tanglish adds Tamil warmth.
 function hello(language: FlowData["language"]): string {
-  return language === "tamil" ? "Vanakkam! " : "";
+  return language === "tanglish" ? "Vanakkam! " : "";
 }
 
 function thanks(language: FlowData["language"]): string {
-  return language === "tamil" ? "Nandri!" : "Thank you!";
+  return language === "tanglish" ? "Nandri!" : "Thank you!";
 }
 
 function calculateTotal(cart: CartItem[]): number {
@@ -209,7 +230,7 @@ export async function handleFlowStep(
   // An FAQ answer does NOT change state/data, so the customer keeps their place
   // in the order flow.
   if (input.type === "text" && input.text) {
-    const faq = await checkFaq(input.text);
+    const faq = await checkFaq(input.text, detectLanguage(input.text));
     if (faq.matched && faq.answer) {
       return {
         newState: state,
@@ -222,8 +243,6 @@ export async function handleFlowStep(
   switch (state) {
     case "start":
       return handleStart(data, input);
-    case "language_select":
-      return handleLanguageSelect(data, input);
     case "greeting":
       return handleGreeting(data, input);
     case "menu_shown":
@@ -249,63 +268,12 @@ export async function handleFlowStep(
 // ─── State Handlers ─────────────────────────────────────────────
 
 async function handleStart(data: FlowData, input: MessageInput): Promise<FlowResult> {
-  // First contact — establish the language before anything else, so non-Tamil
-  // speakers are never defaulted into Tamil. Stash their opening message so we
-  // can honor it (a named meal, or an item order) once the language is known.
-  if (!data.language) {
-    return showLanguagePicker(input.text);
-  }
+  // No upfront language question. Detect English vs Tanglish from the message
+  // and reply in kind; honor any meal/item they named right away.
+  const language = input.text ? detectLanguage(input.text) : data.language ?? "english";
 
-  // Language already known (fresh start, or a new order after one completed):
-  // honor any meal/item in the message instead of just re-showing the menu.
   if (input.text) {
-    return replayFirstMessage(data.language, input.text);
-  }
-
-  return showStartMenu(data.language);
-}
-
-/**
- * Ask the customer to pick a language before the ordering flow begins.
- * `pendingMessage` is their opening line, stashed so we can act on it after.
- */
-function showLanguagePicker(pendingMessage?: string | null): FlowResult {
-  return {
-    newState: "language_select",
-    newData: { ...emptyFlowData(), pending_message: pendingMessage ?? null },
-    messages: [
-      {
-        type: "buttons",
-        text: "Welcome! Please choose your language.\nமொழியைத் தேர்ந்தெடுக்கவும்.",
-        buttons: [
-          { id: "lang_english", title: "English" },
-          { id: "lang_tamil", title: "தமிழ் / Tamil" },
-        ],
-      },
-    ],
-  };
-}
-
-async function handleLanguageSelect(data: FlowData, input: MessageInput): Promise<FlowResult> {
-  let language: FlowData["language"] = null;
-
-  if (input.type === "button_reply" && input.interactionId) {
-    if (input.interactionId === "lang_english") language = "english";
-    else if (input.interactionId === "lang_tamil") language = "tamil";
-  }
-
-  if (!language && input.text) {
-    const t = input.text.toLowerCase();
-    if (t.includes("tamil") || t.includes("தமிழ்") || t.includes("tanglish")) language = "tamil";
-    else if (t.includes("english")) language = "english";
-  }
-
-  // Didn't understand the choice — ask again, keeping their original message.
-  if (!language) return showLanguagePicker(data.pending_message);
-
-  // Now that we know the language, act on the message they opened with.
-  if (data.pending_message) {
-    return replayFirstMessage(language, data.pending_message);
+    return replayFirstMessage(language, input.text);
   }
 
   return showStartMenu(language);
@@ -335,7 +303,11 @@ async function replayFirstMessage(
     }
     // Named a meal that's closed right now — say so, then show what's open.
     return prefixMessage(
-      `Sorry, we're not taking ${requested} orders right now. Here's what you can order:`,
+      say(
+        language,
+        `Sorry, we're not taking ${requested} orders right now. Here's what you can order:`,
+        `Sorry, ippo ${requested} order panna mudiyaadhu. Idho ippo kidaikkurathu:`
+      ),
       await openAvailableMeals(base, available, language)
     );
   }
@@ -369,7 +341,11 @@ async function replayFirstMessage(
       messages: [
         {
           type: "text",
-          text: `${elsewhere.name} is on our ${elsewhere.meal_type} menu — we're serving ${meal} right now. Here's today's ${meal}:`,
+          text: say(
+            language,
+            `${elsewhere.name} is on our ${elsewhere.meal_type} menu — we're serving ${meal} right now. Here's today's ${meal}:`,
+            `${elsewhere.name} namma ${elsewhere.meal_type} menu-la irukku — ippo ${meal} thaan serve panrom. Idho innaikku ${meal}:`
+          ),
         },
         ...listOnly,
       ],
